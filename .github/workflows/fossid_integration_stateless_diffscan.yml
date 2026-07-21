@@ -23,9 +23,7 @@ jobs:
         password: ${{ secrets.FOSSID_CONTAINER_PASSWORD }}
     steps:
       - name: Install curl
-        run: |
-          apt-get update
-          apt-get install -y curl
+        run: apk add --no-cache curl
 
       - name: Checkout Code
         uses: actions/checkout@v5
