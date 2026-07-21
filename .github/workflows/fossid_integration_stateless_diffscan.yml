@@ -22,6 +22,11 @@ jobs:
         username: ${{ secrets.FOSSID_CONTAINER_USERNAME }}
         password: ${{ secrets.FOSSID_CONTAINER_PASSWORD }}
     steps:
+      - name: Install curl
+        run: |
+          apt-get update
+          apt-get install -y curl
+
       - name: Checkout Code
         uses: actions/checkout@v5
       - name: Pull up to date ignore file
