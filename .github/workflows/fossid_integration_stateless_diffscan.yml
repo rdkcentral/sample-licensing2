@@ -1,0 +1,45 @@
+name: Fossid Pre-merge Stateless Diff Scan
+
+on:
+  workflow_call:
+    secrets:
+      FOSSID_CONTAINER_USERNAME:
+        required: true
+      FOSSID_CONTAINER_PASSWORD:
+        required: true
+      FOSSID_HOST_USERNAME:
+        required: true
+      FOSSID_HOST_TOKEN:
+        required: true
+
+jobs:
+  run-diffscan:
+    name: Fossid Annotate PR
+    runs-on: ubuntu-latest
+    container:
+      image: quay.io/fossid/fossid-toolbox:1.5.29
+      credentials:
+        username: ${{ secrets.FOSSID_CONTAINER_USERNAME }}
+        password: ${{ secrets.FOSSID_CONTAINER_PASSWORD }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v5
+      - name: Pull up to date ignore file
+        run: |
+          curl https://raw.githubusercontent.com/rdkcentral/build_tools_workflows/refs/heads/develop/ignore_projects_fossid > /tmp/ignore_projects_fossid
+
+      - name: Test out correct curl fo fossid ignore file
+        run: cat  /tmp/ignore_projects_fossid
+        
+      - name: Run fossid-toolbox
+        env:
+          FOSSID_HOST_USERNAME: ${{ secrets.FOSSID_HOST_USERNAME }}
+          FOSSID_HOST_TOKEN: ${{ secrets.FOSSID_HOST_TOKEN }}
+        run: |
+          fossid \
+            diffscan \
+            --fossid-host $FOSSID_HOST_USERNAME \
+            --fossid-token $FOSSID_HOST_TOKEN \
+            --format github \
+            --fail \
+            --ignore-projects /tmp/ignore_projects_fossid
