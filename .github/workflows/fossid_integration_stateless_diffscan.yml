@@ -23,7 +23,7 @@ jobs:
         password: ${{ secrets.FOSSID_CONTAINER_PASSWORD }}
     steps:
       - name: Install curl
-        run: apk add --no-cache "curl=8.21.0"
+        run: apk add --no-cache curl
 
       - name: Checkout Code
         uses: actions/checkout@v5
