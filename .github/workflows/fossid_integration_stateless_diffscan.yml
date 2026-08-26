@@ -1,0 +1,50 @@
+name: Fossid Pre-merge Stateless Diff Scan
+
+on:
+  workflow_call:
+    secrets:
+      FOSSID_CONTAINER_USERNAME:
+        required: true
+      FOSSID_CONTAINER_PASSWORD:
+        required: true
+      FOSSID_HOST_USERNAME:
+        required: true
+      FOSSID_HOST_TOKEN:
+        required: true
+
+jobs:
+  run-diffscan:
+    name: Fossid Annotate PR
+    runs-on: ubuntu-latest
+    container:
+      image: quay.io/fossid/fossid-toolbox:1.5.29
+      credentials:
+        username: ${{ secrets.FOSSID_CONTAINER_USERNAME }}
+        password: ${{ secrets.FOSSID_CONTAINER_PASSWORD }}
+    steps:
+
+      - name: Setup Tools
+        run: apk add --no-cache curl python3
+
+      - name: Checkout Code
+        uses: actions/checkout@v5
+      
+      - name: Checkout Ignore List and Formatter
+        run: |
+          curl -s https://raw.githubusercontent.com/rdkcentral/build_tools_workflows/refs/heads/develop/ignore_projects_fossid > /tmp/ignore_projects_fossid
+
+      - name: Run FossID Diffscan and Annotate PR
+        env:
+          FOSSID_HOST_USERNAME: ${{ secrets.FOSSID_HOST_USERNAME }}
+          FOSSID_HOST_TOKEN: ${{ secrets.FOSSID_HOST_TOKEN }}
+        run: |
+          # 1. Run diffscan in JSON format to extract exact metadata
+          fossid \
+            diffscan \
+            --fossid-host $FOSSID_HOST_USERNAME \
+            --fossid-token $FOSSID_HOST_TOKEN \
+            --format json \
+            --ignore-projects /tmp/ignore_projects_fossid > /tmp/fossid_raw.json || true
+
+          # 2. Emit custom inline annotations with line numbers & links directly onto Files changed
+          python3 .github/scripts/format_fossid.py /tmp/fossid_raw.json
