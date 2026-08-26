@@ -6,7 +6,6 @@ on:
 
 jobs:
   call-fossid-workflow:
-    if: ${{ ! github.event.pull_request.head.repo.fork }}
     uses: rdkcentral/sample-licensing2/.github/workflows/fossid_integration_stateless_diffscan.yml@test-fossid-json-formatter
     secrets:
         FOSSID_CONTAINER_USERNAME: ${{ secrets.FOSSID_CONTAINER_USERNAME }}
