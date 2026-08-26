@@ -46,5 +46,10 @@ jobs:
             --format json \
             --ignore-projects /tmp/ignore_projects_fossid > /tmp/fossid_raw.json || true
 
-          # 2. Emit custom inline annotations with line numbers & links directly onto Files changed
+          # 2. Print the raw JSON so we can inspect it in the log
+          echo "=== RAW FOSSID JSON OUTPUT ==="
+          cat /tmp/fossid_raw.json
+          echo "=============================="
+
+          # 3. Run the formatter
           python3 .github/scripts/format_fossid.py /tmp/fossid_raw.json
