@@ -3,6 +3,12 @@
 FossID Native GitHub Inline Annotator
 """
 
+#!/usr/bin/env python3
+"""
+FossID Native GitHub Inline Annotator
+Universal Block Handler (Handles 1:1, N:M, and File-Level matches)
+"""
+
 import json
 import os
 import sys
@@ -121,7 +127,7 @@ def parse_and_annotate(raw_text):
 
         raw_url = remote_file_info.get("url") or comp.get("url") or ""
 
-        # 4. Handle Annotations (Line-Level vs File-Level)
+        # 4. Handle Annotations
         if local_blocks:
             for idx, loc_b in enumerate(local_blocks):
                 if not isinstance(loc_b, dict):
@@ -135,18 +141,44 @@ def parse_and_annotate(raw_text):
                     continue
                 local_end = local_start + (local_len - 1 if local_len > 0 else 0)
 
-                # Pair 1-to-1 with corresponding remote snippet block
-                rem_b = remote_blocks[idx] if idx < len(remote_blocks) and isinstance(remote_blocks[idx], dict) else {}
-                rem_lines = rem_b.get("lines") or {}
-                remote_start = rem_lines.get("offset")
-                remote_len = rem_lines.get("length")
+                # --- Universal Remote Block Resolution ---
+                is_last_local = (idx == len(local_blocks) - 1)
 
-                if remote_start is not None and remote_len is not None:
-                    remote_end = remote_start + (remote_len - 1 if remote_len > 0 else 0)
-                    remote_lines_display = f" (Lines {remote_start}-{remote_end})"
+                if len(remote_blocks) == len(local_blocks):
+                    # Scenario 1: Exact 1-to-1 count
+                    rem_slice = [remote_blocks[idx]]
+                elif len(remote_blocks) > len(local_blocks):
+                    # Scenario 2: More remote blocks than local (e.g. 6 local, 9 remote)
+                    if is_last_local:
+                        rem_slice = remote_blocks[idx:]  # Bundle all remaining remote blocks
+                    else:
+                        rem_slice = [remote_blocks[idx]]
                 else:
-                    remote_end = None
+                    # Scenario 3: More local blocks than remote (e.g. 5 local, 1 remote)
+                    if idx < len(remote_blocks):
+                        rem_slice = [remote_blocks[idx]]
+                    else:
+                        rem_slice = remote_blocks  # Fallback to all remote blocks so context is preserved
+
+                # Extract line ranges from the selected remote slice
+                rem_ranges = []
+                for rb in rem_slice:
+                    if isinstance(rb, dict):
+                        rl = rb.get("lines") or {}
+                        r_start = rl.get("offset")
+                        r_len = rl.get("length")
+                        if r_start is not None and r_len is not None:
+                            r_end = r_start + (r_len - 1 if r_len > 0 else 0)
+                            rem_ranges.append((r_start, r_end))
+
+                if rem_ranges:
+                    remote_range_strs = [f"{s}-{e}" for s, e in rem_ranges]
+                    remote_lines_display = f" (Lines {', '.join(remote_range_strs)})"
+                    primary_r_start, primary_r_end = rem_ranges[0]
+                else:
+                    remote_range_strs = []
                     remote_lines_display = ""
+                    primary_r_start, primary_r_end = None, None
 
                 # Deduplication
                 dedup_key = (
@@ -156,8 +188,7 @@ def parse_and_annotate(raw_text):
                     purl,
                     remote_file_path,
                     remote_lic,
-                    remote_start,
-                    remote_end,
+                    tuple(remote_range_strs),
                 )
                 if dedup_key in seen_findings:
                     continue
@@ -166,8 +197,8 @@ def parse_and_annotate(raw_text):
                 # Construct Clickable Remote URL
                 if raw_url and "github.com" in raw_url:
                     base_url = raw_url.split("#")[0]
-                    if remote_start is not None and remote_end is not None:
-                        remote_link = f"{base_url}#L{remote_start}-L{remote_end}"
+                    if primary_r_start is not None and primary_r_end is not None:
+                        remote_link = f"{base_url}#L{primary_r_start}-L{primary_r_end}"
                     else:
                         remote_link = base_url
                 else:
@@ -211,9 +242,27 @@ def parse_and_annotate(raw_text):
                 print(f"::error file={escaped_file},line={local_start},endLine={local_end},title={escaped_title}::{escaped_msg}")
                 has_issues = True
         else:
-            # File-level annotation
+            # Scenario 4: File-level annotation (whole-file match without highlight blocks)
+            rem_ranges = []
+            for rb in remote_blocks:
+                if isinstance(rb, dict):
+                    rl = rb.get("lines") or {}
+                    r_start = rl.get("offset")
+                    r_len = rl.get("length")
+                    if r_start is not None and r_len is not None:
+                        r_end = r_start + (r_len - 1 if r_len > 0 else 0)
+                        rem_ranges.append((r_start, r_end))
+
+            remote_range_strs = [f"{s}-{e}" for s, e in rem_ranges]
+            remote_lines_display = f" (Lines {', '.join(remote_range_strs)})" if remote_range_strs else ""
+            primary_r_start, primary_r_end = rem_ranges[0] if rem_ranges else (None, None)
+
             if raw_url and "github.com" in raw_url:
-                remote_link = raw_url.split("#")[0]
+                base_url = raw_url.split("#")[0]
+                if primary_r_start is not None and primary_r_end is not None:
+                    remote_link = f"{base_url}#L{primary_r_start}-L{primary_r_end}"
+                else:
+                    remote_link = base_url
             else:
                 remote_link = raw_url
 
@@ -226,8 +275,7 @@ def parse_and_annotate(raw_text):
                 purl,
                 remote_file_path,
                 remote_lic,
-                None,
-                None,
+                tuple(remote_range_strs),
             )
             if dedup_key not in seen_findings:
                 seen_findings.add(dedup_key)
@@ -245,7 +293,7 @@ def parse_and_annotate(raw_text):
 
                 msg = (
                     f"Local:       {local_file}{local_lic_part}\n"
-                    f"Remote:      {remote_file_path}{remote_lic_part}\n"
+                    f"Remote:      {remote_file_path}{remote_lines_display}{remote_lic_part}\n"
                     f"Component:   {purl}\n"
                     f"{link_section}"
                 )
