@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-FossID Native GitHub Inline Annotator (Clean & Non-Redundant)
+FossID Native GitHub Inline Annotator
 """
 
 import json
@@ -14,6 +14,22 @@ def escape_github_data(text):
 def escape_github_property(text):
     """GitHub Actions requires encoding colons and commas for command properties."""
     return text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A").replace(":", "%3A").replace(",", "%2C")
+
+def get_local_link(file_path, start_line=None, end_line=None):
+    """Constructs a direct GitHub URL to the exact lines in the local repository."""
+    server_url = os.environ.get("GITHUB_SERVER_URL", "https://github.com")
+    repo = os.environ.get("GITHUB_REPOSITORY")
+    ref = os.environ.get("GITHUB_HEAD_REF") or os.environ.get("GITHUB_SHA")
+    
+    if not (repo and ref and file_path):
+        return ""
+    
+    base = f"{server_url}/{repo}/blob/{ref}/{file_path}"
+    if start_line is not None and end_line is not None:
+        return f"{base}#L{start_line}-L{end_line}"
+    elif start_line is not None:
+        return f"{base}#L{start_line}"
+    return base
 
 def extract_license_str(container):
     """Extracts all unique license identifiers from a JSON container."""
@@ -119,7 +135,7 @@ def parse_and_annotate(raw_text):
                     continue
                 local_end = local_start + (local_len - 1 if local_len > 0 else 0)
 
-                # Pair 1-to-1 with the corresponding remote snippet block
+                # Pair 1-to-1 with corresponding remote snippet block
                 rem_b = remote_blocks[idx] if idx < len(remote_blocks) and isinstance(remote_blocks[idx], dict) else {}
                 rem_lines = rem_b.get("lines") or {}
                 remote_start = rem_lines.get("offset")
@@ -132,7 +148,7 @@ def parse_and_annotate(raw_text):
                     remote_end = None
                     remote_lines_display = ""
 
-                # Deduplication: preserves distinct findings per specific line range
+                # Deduplication
                 dedup_key = (
                     local_file,
                     local_start,
@@ -147,7 +163,7 @@ def parse_and_annotate(raw_text):
                     continue
                 seen_findings.add(dedup_key)
 
-                # Construct precise 1-to-1 clickable URL with the specific line range
+                # Construct Clickable Remote URL
                 if raw_url and "github.com" in raw_url:
                     base_url = raw_url.split("#")[0]
                     if remote_start is not None and remote_end is not None:
@@ -157,15 +173,26 @@ def parse_and_annotate(raw_text):
                 else:
                     remote_link = raw_url
 
+                # Construct Clickable Local URL
+                local_link = get_local_link(local_file, local_start, local_end)
+
                 # Format Message
                 local_lic_part = f" | License: {local_lic}" if local_lic else ""
                 remote_lic_part = f" | License: {remote_lic}" if remote_lic else ""
 
+                if local_link:
+                    link_section = (
+                        f"Local Link:  {local_link}\n"
+                        f"Remote Link: {remote_link}"
+                    )
+                else:
+                    link_section = f"Link:        {remote_link}"
+
                 msg = (
-                    f"Local:     {local_file} (Lines {local_start}-{local_end}){local_lic_part}\n"
-                    f"Remote:    {remote_file_path}{remote_lines_display}{remote_lic_part}\n"
-                    f"Component: {purl}\n"
-                    f"Link:      {remote_link}"
+                    f"Local:       {local_file} (Lines {local_start}-{local_end}){local_lic_part}\n"
+                    f"Remote:      {remote_file_path}{remote_lines_display}{remote_lic_part}\n"
+                    f"Component:   {purl}\n"
+                    f"{link_section}"
                 )
 
                 # Title
@@ -184,11 +211,13 @@ def parse_and_annotate(raw_text):
                 print(f"::error file={escaped_file},line={local_start},endLine={local_end},title={escaped_title}::{escaped_msg}")
                 has_issues = True
         else:
-            # File-level annotation (when no specific highlight blocks exist)
+            # File-level annotation
             if raw_url and "github.com" in raw_url:
                 remote_link = raw_url.split("#")[0]
             else:
                 remote_link = raw_url
+
+            local_link = get_local_link(local_file)
 
             dedup_key = (
                 local_file,
@@ -206,11 +235,19 @@ def parse_and_annotate(raw_text):
                 local_lic_part = f" | License: {local_lic}" if local_lic else ""
                 remote_lic_part = f" | License: {remote_lic}" if remote_lic else ""
 
+                if local_link:
+                    link_section = (
+                        f"Local Link:  {local_link}\n"
+                        f"Remote Link: {remote_link}"
+                    )
+                else:
+                    link_section = f"Link:        {remote_link}"
+
                 msg = (
-                    f"Local:     {local_file}{local_lic_part}\n"
-                    f"Remote:    {remote_file_path}{remote_lic_part}\n"
-                    f"Component: {purl}\n"
-                    f"Link:      {remote_link}"
+                    f"Local:       {local_file}{local_lic_part}\n"
+                    f"Remote:      {remote_file_path}{remote_lic_part}\n"
+                    f"Component:   {purl}\n"
+                    f"{link_section}"
                 )
 
                 if artifact and remote_lic:
