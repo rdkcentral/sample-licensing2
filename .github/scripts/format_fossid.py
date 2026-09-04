@@ -92,19 +92,6 @@ def parse_and_annotate(raw_text):
         remote_file_path = remote_file_info.get("path") or ""
         remote_blocks = (remote_file_info.get("highlight") or {}).get("blocks") or []
 
-        # Collect all remote line ranges for accurate display and deduplication
-        remote_range_strs = []
-        for rb in remote_blocks:
-            if isinstance(rb, dict):
-                rl = rb.get("lines") or {}
-                r_start = rl.get("offset")
-                r_len = rl.get("length")
-                if r_start is not None and r_len is not None:
-                    r_end = r_start + (r_len - 1 if r_len > 0 else 0)
-                    remote_range_strs.append(f"{r_start}-{r_end}")
-
-        remote_lines_display = f" (Lines {', '.join(remote_range_strs)})" if remote_range_strs else ""
-
         # 3. Component & Licenses
         comp = item.get("component") or {}
         artifact = comp.get("artifact") or ""
@@ -116,28 +103,15 @@ def parse_and_annotate(raw_text):
         if not remote_lic:
             remote_lic = extract_all_component_licenses(comp)
 
-        # 4. Construct Clickable URL with Range (#L856-L886)
         raw_url = remote_file_info.get("url") or comp.get("url") or ""
-        if raw_url and "github.com" in raw_url and remote_blocks:
-            first_rb = remote_blocks[0] if isinstance(remote_blocks[0], dict) else {}
-            rl = first_rb.get("lines") or {}
-            r_start = rl.get("offset")
-            r_len = rl.get("length")
-            if r_start is not None and r_len is not None:
-                r_end = r_start + (r_len - 1 if r_len > 0 else 0)
-                base_url = raw_url.split("#")[0]
-                remote_link = f"{base_url}#L{r_start}-L{r_end}"
-            else:
-                remote_link = raw_url
-        else:
-            remote_link = raw_url
 
-        # 5. Handle Annotations (Line-Level vs File-Level)
+        # 4. Handle Annotations (Line-Level vs File-Level)
         if local_blocks:
-            for loc_b in local_blocks:
+            for idx, loc_b in enumerate(local_blocks):
                 if not isinstance(loc_b, dict):
                     continue
 
+                # Local Line Range
                 loc_lines = loc_b.get("lines") or {}
                 local_start = loc_lines.get("offset")
                 local_len = loc_lines.get("length")
@@ -145,7 +119,20 @@ def parse_and_annotate(raw_text):
                     continue
                 local_end = local_start + (local_len - 1 if local_len > 0 else 0)
 
-                # Deduplication: preserves distinct remote snippets even if local lines match
+                # Pair 1-to-1 with the corresponding remote snippet block
+                rem_b = remote_blocks[idx] if idx < len(remote_blocks) and isinstance(remote_blocks[idx], dict) else {}
+                rem_lines = rem_b.get("lines") or {}
+                remote_start = rem_lines.get("offset")
+                remote_len = rem_lines.get("length")
+
+                if remote_start is not None and remote_len is not None:
+                    remote_end = remote_start + (remote_len - 1 if remote_len > 0 else 0)
+                    remote_lines_display = f" (Lines {remote_start}-{remote_end})"
+                else:
+                    remote_end = None
+                    remote_lines_display = ""
+
+                # Deduplication: preserves distinct findings per specific line range
                 dedup_key = (
                     local_file,
                     local_start,
@@ -153,11 +140,22 @@ def parse_and_annotate(raw_text):
                     purl,
                     remote_file_path,
                     remote_lic,
-                    tuple(remote_range_strs),
+                    remote_start,
+                    remote_end,
                 )
                 if dedup_key in seen_findings:
                     continue
                 seen_findings.add(dedup_key)
+
+                # Construct precise 1-to-1 clickable URL with the specific line range
+                if raw_url and "github.com" in raw_url:
+                    base_url = raw_url.split("#")[0]
+                    if remote_start is not None and remote_end is not None:
+                        remote_link = f"{base_url}#L{remote_start}-L{remote_end}"
+                    else:
+                        remote_link = base_url
+                else:
+                    remote_link = raw_url
 
                 # Format Message
                 local_lic_part = f" | License: {local_lic}" if local_lic else ""
@@ -186,7 +184,12 @@ def parse_and_annotate(raw_text):
                 print(f"::error file={escaped_file},line={local_start},endLine={local_end},title={escaped_title}::{escaped_msg}")
                 has_issues = True
         else:
-            # File-level annotation (omits line properties when no local blocks exist)
+            # File-level annotation (when no specific highlight blocks exist)
+            if raw_url and "github.com" in raw_url:
+                remote_link = raw_url.split("#")[0]
+            else:
+                remote_link = raw_url
+
             dedup_key = (
                 local_file,
                 None,
@@ -194,7 +197,8 @@ def parse_and_annotate(raw_text):
                 purl,
                 remote_file_path,
                 remote_lic,
-                tuple(remote_range_strs),
+                None,
+                None,
             )
             if dedup_key not in seen_findings:
                 seen_findings.add(dedup_key)
@@ -204,7 +208,7 @@ def parse_and_annotate(raw_text):
 
                 msg = (
                     f"Local:     {local_file}{local_lic_part}\n"
-                    f"Remote:    {remote_file_path}{remote_lines_display}{remote_lic_part}\n"
+                    f"Remote:    {remote_file_path}{remote_lic_part}\n"
                     f"Component: {purl}\n"
                     f"Link:      {remote_link}"
                 )
