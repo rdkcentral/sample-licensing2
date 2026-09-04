@@ -116,9 +116,23 @@ def parse_and_annotate(raw_text):
         if not remote_lic:
             remote_lic = extract_all_component_licenses(comp)
 
+        # 4. Construct Clickable URL with Range (#L856-L886)
         raw_url = remote_file_info.get("url") or comp.get("url") or ""
+        if raw_url and "github.com" in raw_url and remote_blocks:
+            first_rb = remote_blocks[0] if isinstance(remote_blocks[0], dict) else {}
+            rl = first_rb.get("lines") or {}
+            r_start = rl.get("offset")
+            r_len = rl.get("length")
+            if r_start is not None and r_len is not None:
+                r_end = r_start + (r_len - 1 if r_len > 0 else 0)
+                base_url = raw_url.split("#")[0]
+                remote_link = f"{base_url}#L{r_start}-L{r_end}"
+            else:
+                remote_link = raw_url
+        else:
+            remote_link = raw_url
 
-        # 4. Handle Annotations (Line-Level vs File-Level)
+        # 5. Handle Annotations (Line-Level vs File-Level)
         if local_blocks:
             for loc_b in local_blocks:
                 if not isinstance(loc_b, dict):
@@ -153,7 +167,7 @@ def parse_and_annotate(raw_text):
                     f"Local:     {local_file} (Lines {local_start}-{local_end}){local_lic_part}\n"
                     f"Remote:    {remote_file_path}{remote_lines_display}{remote_lic_part}\n"
                     f"Component: {purl}\n"
-                    f"Link:      {raw_url}"
+                    f"Link:      {remote_link}"
                 )
 
                 # Title
@@ -192,7 +206,7 @@ def parse_and_annotate(raw_text):
                     f"Local:     {local_file}{local_lic_part}\n"
                     f"Remote:    {remote_file_path}{remote_lines_display}{remote_lic_part}\n"
                     f"Component: {purl}\n"
-                    f"Link:      {raw_url}"
+                    f"Link:      {remote_link}"
                 )
 
                 if artifact and remote_lic:
