@@ -5,6 +5,7 @@ FossID Native GitHub Inline Annotator
 import json
 import os
 import sys
+from urllib.parse import quote
 
 def escape_github_data(text):
     """GitHub Actions requires encoding newlines and percent signs for multiline annotations."""
@@ -69,8 +70,36 @@ def extract_all_component_licenses(comp):
                     
     return ", ".join(dict.fromkeys(collected))
 
-def parse_and_annotate(raw_text):
+def write_sarif(path, rules, results):
+    sarif = {
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [
+            {
+                "tool": {
+                    "driver": {
+                        "name": "FossID",
+                        "informationUri": "https://fossid.com/",
+                        "rules": list(rules.values()),
+                    }
+                },
+                "automationDetails": {"id": "fossid-license-compliance/"},
+                "results": results,
+            }
+        ],
+    }
+    with open(path, "w", encoding="utf-8") as sarif_file:
+        json.dump(sarif, sarif_file, indent=2)
+        sarif_file.write("\n")
+
+def get_rule_id(match_type, author, artifact, license_name):
+    parts = (match_type, author, artifact, license_name)
+    return "fossid/" + "/".join(quote(part or "unknown", safe="-._") for part in parts)
+
+def parse_and_annotate(raw_text, sarif_path=None):
     if not raw_text or not raw_text.strip():
+        if sarif_path:
+            write_sarif(sarif_path, {}, [])
         sys.exit(0)
 
     try:
@@ -81,10 +110,15 @@ def parse_and_annotate(raw_text):
 
     issues = data.get("license_issues", []) if isinstance(data, dict) else data
     if not issues or not isinstance(issues, list):
+        if sarif_path:
+            write_sarif(sarif_path, {}, [])
         sys.exit(0)
 
     has_issues = False
     seen_findings = set()
+    seen_sarif_findings = set()
+    sarif_rules = {}
+    sarif_results = []
 
     for item in issues:
         if not isinstance(item, dict):
@@ -100,9 +134,11 @@ def parse_and_annotate(raw_text):
         remote_blocks = (remote_file_info.get("highlight") or {}).get("blocks") or []
 
         comp = item.get("component") or {}
+        author = comp.get("author") or ""
         artifact = comp.get("artifact") or ""
         ver = comp.get("version") or ""
         purl = comp.get("purl") or (f"{artifact}@{ver}" if (artifact and ver) else artifact)
+        match_type = item.get("match_type") or "license"
 
         local_lic = extract_license_str(local_file_info)
         remote_lic = extract_license_str(remote_file_info) or extract_all_component_licenses(comp)
@@ -116,7 +152,8 @@ def parse_and_annotate(raw_text):
                 start = lines.get("offset")
                 length = lines.get("length")
                 if start is not None and length is not None:
-                    valid_local_blocks.append((start, start + (length - 1 if length > 0 else 0)))
+                    start_line = start + 1
+                    valid_local_blocks.append((start_line, start_line + (length - 1 if length > 0 else 0)))
 
         tasks = []
         if valid_local_blocks:
@@ -138,7 +175,8 @@ def parse_and_annotate(raw_text):
                     r_start = rl.get("offset")
                     r_len = rl.get("length")
                     if r_start is not None and r_len is not None:
-                        rem_ranges.append((r_start, r_start + (r_len - 1 if r_len > 0 else 0)))
+                        start_line = r_start + 1
+                        rem_ranges.append((start_line, start_line + (r_len - 1 if r_len > 0 else 0)))
 
             rem_range_strs = [f"{s}-{e}" for s, e in rem_ranges]
             remote_lines_display = f" (Lines {', '.join(rem_range_strs)})" if rem_range_strs else ""
@@ -173,6 +211,43 @@ def parse_and_annotate(raw_text):
                 f"{link_section}"
             )
 
+            if sarif_path and local_file and local_start is not None:
+                rule_id = get_rule_id(match_type, author, artifact, remote_lic)
+                sarif_key = (local_file, local_start, rule_id)
+                if sarif_key not in seen_sarif_findings:
+                    seen_sarif_findings.add(sarif_key)
+                    sarif_rules.setdefault(
+                        rule_id,
+                        {
+                            "id": rule_id,
+                            "name": "FossIDLicenseMatch",
+                            "shortDescription": {"text": "FossID detected matched third-party source code"},
+                            "fullDescription": {
+                                "text": "FossID found source code matching a third-party component that requires license compliance review."
+                            },
+                            "help": {
+                                "text": "Review the matched component and license, then remediate or dismiss the alert with an audit comment."
+                            },
+                            "defaultConfiguration": {"level": "warning"},
+                            "properties": {"tags": ["license-compliance", "fossid"]},
+                        },
+                    )
+                    sarif_results.append(
+                        {
+                            "ruleId": rule_id,
+                            "level": "warning",
+                            "message": {"text": msg},
+                            "locations": [
+                                {
+                                    "physicalLocation": {
+                                        "artifactLocation": {"uri": local_file},
+                                        "region": {"startLine": local_start, "endLine": local_end},
+                                    }
+                                }
+                            ],
+                        }
+                    )
+
             # Title & Workflow Command Emission
             title_comp = f"{artifact} ({remote_lic})" if (artifact and remote_lic) else (artifact or (f"({remote_lic})" if remote_lic else ""))
             title = f"FossID Match: {title_comp}" if title_comp else "FossID Match"
@@ -185,20 +260,39 @@ def parse_and_annotate(raw_text):
             print(f"::error file={escaped_file}{line_props},title={escaped_title}::{escaped_msg}")
             has_issues = True
 
+    if sarif_path:
+        write_sarif(sarif_path, sarif_rules, sarif_results)
+
     if has_issues:
         sys.exit(1)
 
 def main():
-    if len(sys.argv) > 1:
-        if not os.path.exists(sys.argv[1]):
-            sys.stderr.write(f"Error: File not found: {sys.argv[1]}\n")
+    input_path = None
+    sarif_path = None
+    args = iter(sys.argv[1:])
+    for arg in args:
+        if arg == "--sarif":
+            try:
+                sarif_path = next(args)
+            except StopIteration:
+                sys.stderr.write("Error: --sarif requires an output path\n")
+                sys.exit(2)
+        elif input_path is None:
+            input_path = arg
+        else:
+            sys.stderr.write(f"Error: Unexpected argument: {arg}\n")
+            sys.exit(2)
+
+    if input_path:
+        if not os.path.exists(input_path):
+            sys.stderr.write(f"Error: File not found: {input_path}\n")
             sys.exit(1)
-        with open(sys.argv[1], "r", encoding="utf-8") as f:
+        with open(input_path, "r", encoding="utf-8") as f:
             raw_input = f.read()
     else:
         raw_input = sys.stdin.read()
 
-    parse_and_annotate(raw_input)
+    parse_and_annotate(raw_input, sarif_path)
 
 if __name__ == "__main__":
     main()

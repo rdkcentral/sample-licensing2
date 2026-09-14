@@ -16,6 +16,10 @@ jobs:
   run-diffscan:
     name: Fossid Annotate PR
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
     container:
       image: quay.io/fossid/fossid-toolbox:1.5.29
       credentials:
@@ -33,7 +37,7 @@ jobs:
         run: |
           curl -s https://raw.githubusercontent.com/rdkcentral/build_tools_workflows/refs/heads/develop/ignore_projects_fossid > /tmp/ignore_projects_fossid
 
-      - name: Run FossID Diffscan and Annotate PR
+      - name: Run FossID Diffscan
         env:
           FOSSID_HOST_USERNAME: ${{ secrets.FOSSID_HOST_USERNAME }}
           FOSSID_HOST_TOKEN: ${{ secrets.FOSSID_HOST_TOKEN }}
@@ -51,5 +55,17 @@ jobs:
           cat /tmp/fossid_raw.json
           echo "=============================="
 
-          # 3. Run the formatter
-          python3 .github/scripts/format_fossid.py /tmp/fossid_raw.json
+      - name: Format FossID Results
+        id: format-fossid
+        continue-on-error: true
+        run: python3 .github/scripts/format_fossid.py /tmp/fossid_raw.json --sarif fossid.sarif
+
+      - name: Upload FossID SARIF
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: fossid.sarif
+          category: fossid-license-compliance
+
+      - name: Fail on FossID Findings
+        if: steps.format-fossid.outcome == 'failure'
+        run: exit 1
