@@ -2,9 +2,14 @@ name: Fossid Stateless Diff Scan
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened]
     branches: [develop, main]
   push:
     branches: [develop, main, test-fossid-json-formatter]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   call-fossid-workflow:
@@ -14,7 +19,7 @@ jobs:
       security-events: write
     uses: rdkcentral/sample-licensing2/.github/workflows/fossid_integration_stateless_diffscan.yml@test-fossid-json-formatter
     secrets:
-        FOSSID_CONTAINER_USERNAME: ${{ secrets.FOSSID_CONTAINER_USERNAME }}
-        FOSSID_CONTAINER_PASSWORD: ${{ secrets.FOSSID_CONTAINER_PASSWORD }}
-        FOSSID_HOST_USERNAME: ${{ secrets.FOSSID_HOST_USERNAME }}
-        FOSSID_HOST_TOKEN: ${{ secrets.FOSSID_HOST_TOKEN }}
+      FOSSID_CONTAINER_USERNAME: ${{ secrets.FOSSID_CONTAINER_USERNAME }}
+      FOSSID_CONTAINER_PASSWORD: ${{ secrets.FOSSID_CONTAINER_PASSWORD }}
+      FOSSID_HOST_USERNAME: ${{ secrets.FOSSID_HOST_USERNAME }}
+      FOSSID_HOST_TOKEN: ${{ secrets.FOSSID_HOST_TOKEN }}

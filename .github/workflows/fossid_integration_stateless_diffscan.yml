@@ -20,48 +20,57 @@ jobs:
       actions: read
       contents: read
       security-events: write
-    container:
-      image: quay.io/fossid/fossid-toolbox:1.5.29
-      credentials:
-        username: ${{ secrets.FOSSID_CONTAINER_USERNAME }}
-        password: ${{ secrets.FOSSID_CONTAINER_PASSWORD }}
+
     steps:
-
-      - name: Setup Tools
-        run: apk add --no-cache curl python3
-
       - name: Checkout Code
-        uses: actions/checkout@v5
-      
-      - name: Checkout Ignore List and Formatter
-        run: |
-          curl -s https://raw.githubusercontent.com/rdkcentral/build_tools_workflows/refs/heads/develop/ignore_projects_fossid > /tmp/ignore_projects_fossid
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Full history needed so git diff can resolve ancestor commit
 
-      - name: Run FossID Diffscan
+      - name: Log in to Quay.io
+        uses: docker/login-action@v3
+        with:
+          registry: quay.io
+          username: ${{ secrets.FOSSID_CONTAINER_USERNAME }}
+          password: ${{ secrets.FOSSID_CONTAINER_PASSWORD }}
+
+      - name: Fetch Ignore List
+        run: |
+          mkdir -p /tmp/fossid
+          curl -sSL https://raw.githubusercontent.com/rdkcentral/build_tools_workflows/refs/heads/develop/ignore_projects_fossid -o /tmp/fossid/ignore_projects_fossid
+
+      - name: Run FossID Toolbox Diffscan (Docker)
         env:
           FOSSID_HOST_USERNAME: ${{ secrets.FOSSID_HOST_USERNAME }}
           FOSSID_HOST_TOKEN: ${{ secrets.FOSSID_HOST_TOKEN }}
         run: |
-          # 1. Run diffscan in JSON format to extract exact metadata
-          fossid \
-            diffscan \
-            --fossid-host $FOSSID_HOST_USERNAME \
-            --fossid-token $FOSSID_HOST_TOKEN \
-            --format json \
-            --ignore-projects /tmp/ignore_projects_fossid > /tmp/fossid_raw.json || true
+          # 1. Allow git operations inside container workspace
+          # 2. Run diffscan and stream json to host temp path
+          docker run --rm \
+            -v "${{ github.workspace }}:/repo" \
+            -v "/tmp/fossid:/fossid_config" \
+            -w /repo \
+            --entrypoint /bin/sh \
+            quay.io/fossid/fossid-toolbox:1.5.29 \
+            -c "git config --global --add safe.directory /repo && fossid diffscan --fossid-host '$FOSSID_HOST_USERNAME' --fossid-token '$FOSSID_HOST_TOKEN' --format json --ignore-projects /fossid_config/ignore_projects_fossid" > /tmp/fossid/fossid_raw.json || true
 
-          # 2. Print the raw JSON so we can inspect it in the log
           echo "=== RAW FOSSID JSON OUTPUT ==="
-          cat /tmp/fossid_raw.json
+          cat /tmp/fossid/fossid_raw.json
           echo "=============================="
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
       - name: Format FossID Results
         id: format-fossid
-        continue-on-error: true
-        run: python3 .github/scripts/format_fossid.py /tmp/fossid_raw.json --sarif fossid.sarif
+        run: |
+          python3 .github/scripts/format_fossid.py /tmp/fossid/fossid_raw.json --sarif fossid.sarif
 
       - name: Upload FossID SARIF
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
         with:
           sarif_file: fossid.sarif
           category: fossid-license-compliance
