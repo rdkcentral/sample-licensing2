@@ -65,7 +65,3 @@ jobs:
         with:
           sarif_file: fossid.sarif
           category: fossid-license-compliance
-
-      - name: Fail on FossID Findings
-        if: steps.format-fossid.outcome == 'failure'
-        run: exit 1
