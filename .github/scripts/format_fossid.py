@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 FossID Native GitHub Inline Annotator & SARIF Exporter
+Schema-compliant SARIF 2.1.0 with automatic GitHub Code Scanning fingerprinting.
 """
-import hashlib
 import json
 import os
 import re
@@ -94,16 +94,8 @@ def get_rule_id(match_type, author, artifact):
     return f"fossid/{match_clean}/{comp_clean}"
 
 
-def generate_fingerprint(local_file, artifact, remote_file_path):
-    """
-    Custom metadata fingerprint for component tracking.
-    """
-    identity = f"{local_file}::{artifact}::{remote_file_path}"
-    return hashlib.sha256(identity.encode("utf-8")).hexdigest()
-
-
 def write_sarif(path, rules, results):
-    """Outputs a SARIF 2.1.0 JSON file compatible with GitHub Code Scanning."""
+    """Outputs a strictly compliant SARIF 2.1.0 JSON file."""
     sarif = {
         "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
         "version": "2.1.0",
@@ -197,7 +189,7 @@ def parse_and_annotate(raw_text, sarif_path=None):
         else:
             tasks.append((1, 1, remote_blocks))
 
-        # 3. Process matches and build annotations & SARIF results
+        # 3. Process matches and emit results
         for local_start, local_end, rem_slice in tasks:
             rem_ranges = []
             for rb in rem_slice:
@@ -241,7 +233,7 @@ def parse_and_annotate(raw_text, sarif_path=None):
                 f"{link_section}"
             )
 
-            # Build SARIF result if requested
+            # Build valid SARIF result
             if sarif_path and local_file:
                 rule_id = get_rule_id(match_type, author, artifact)
                 sarif_key = (local_file, local_start, rule_id)
@@ -269,19 +261,16 @@ def parse_and_annotate(raw_text, sarif_path=None):
                                     f"dismiss it with a comment in this Code Scanning alert."
                                 ),
                             },
-                            # Marked as error
                             "defaultConfiguration": {"level": "error"},
                             "properties": {"tags": ["license-compliance", "fossid"]},
                         },
                     )
 
-                    # Store our identifier in correlationKey to prevent conflicts with GitHub's primaryLocationLineHash
-                    match_fingerprint = generate_fingerprint(local_file, artifact, remote_file_path)
-
+                    # Strictly valid SARIF 2.1.0 result object
                     sarif_results.append(
                         {
                             "ruleId": rule_id,
-                            "level": "error",  # Marked as error
+                            "level": "error",
                             "message": {"text": msg},
                             "locations": [
                                 {
@@ -297,8 +286,11 @@ def parse_and_annotate(raw_text, sarif_path=None):
                                     }
                                 }
                             ],
-                            # GitHub will auto-populate primaryLocationLineHash correctly
-                            "correlationId": match_fingerprint,
+                            "properties": {
+                                "component": purl,
+                                "remoteFile": remote_file_path,
+                                "matchedLicense": remote_lic
+                            }
                         }
                     )
 
