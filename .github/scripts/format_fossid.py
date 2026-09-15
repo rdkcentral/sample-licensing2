@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
 FossID Native GitHub Inline Annotator & SARIF Exporter
-Includes partialFingerprints for persistent alert dismissals in GitHub Code Scanning.
 """
 import hashlib
 import json
@@ -88,7 +87,6 @@ def extract_all_component_licenses(comp):
 def get_rule_id(match_type, author, artifact):
     """
     Creates a clean, stable Rule ID compliant with GitHub SARIF requirements.
-    Avoids dynamic properties (like volatile license strings or line numbers) in the ID.
     """
     comp_clean = re.sub(r"[^a-zA-Z0-9._-]", "-", f"{author}-{artifact}".strip("-"))
     comp_clean = comp_clean if comp_clean else "unspecified"
@@ -98,8 +96,7 @@ def get_rule_id(match_type, author, artifact):
 
 def generate_fingerprint(local_file, artifact, remote_file_path):
     """
-    Computes a deterministic hash representing the exact finding identity.
-    This enables GitHub Code Scanning to remember dismissals even if line numbers shift.
+    Custom metadata fingerprint for component tracking.
     """
     identity = f"{local_file}::{artifact}::{remote_file_path}"
     return hashlib.sha256(identity.encode("utf-8")).hexdigest()
@@ -272,18 +269,19 @@ def parse_and_annotate(raw_text, sarif_path=None):
                                     f"dismiss it with a comment in this Code Scanning alert."
                                 ),
                             },
-                            "defaultConfiguration": {"level": "warning"},
+                            # Marked as error
+                            "defaultConfiguration": {"level": "error"},
                             "properties": {"tags": ["license-compliance", "fossid"]},
                         },
                     )
 
-                    # Compute primaryLocationLineHash partialFingerprint
-                    line_hash = generate_fingerprint(local_file, artifact, remote_file_path)
+                    # Store our identifier in correlationKey to prevent conflicts with GitHub's primaryLocationLineHash
+                    match_fingerprint = generate_fingerprint(local_file, artifact, remote_file_path)
 
                     sarif_results.append(
                         {
                             "ruleId": rule_id,
-                            "level": "warning",
+                            "level": "error",  # Marked as error
                             "message": {"text": msg},
                             "locations": [
                                 {
@@ -299,13 +297,12 @@ def parse_and_annotate(raw_text, sarif_path=None):
                                     }
                                 }
                             ],
-                            "partialFingerprints": {
-                                "primaryLocationLineHash": line_hash
-                            },
+                            # GitHub will auto-populate primaryLocationLineHash correctly
+                            "correlationId": match_fingerprint,
                         }
                     )
 
-            # Workflow inline annotation command
+            # Workflow inline annotation command (marked as error)
             title_comp = f"{artifact} ({remote_lic})" if (artifact and remote_lic) else (artifact or (f"({remote_lic})" if remote_lic else ""))
             title = f"FossID Match: {title_comp}" if title_comp else "FossID Match"
 
@@ -314,13 +311,12 @@ def parse_and_annotate(raw_text, sarif_path=None):
             escaped_file = escape_github_property(local_file)
 
             line_props = f",line={local_start},endLine={local_end}" if local_start is not None else ""
-            print(f"::warning file={escaped_file}{line_props},title={escaped_title}::{escaped_msg}")
+            print(f"::error file={escaped_file}{line_props},title={escaped_title}::{escaped_msg}")
             has_issues = True
 
     if sarif_path:
         write_sarif(sarif_path, sarif_rules, sarif_results)
 
-    # Return 0 so SARIF upload always proceeds; alerts are tracked in Code Scanning
     sys.exit(0)
 
 
