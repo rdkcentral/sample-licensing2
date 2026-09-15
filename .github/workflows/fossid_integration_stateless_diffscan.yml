@@ -25,7 +25,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Full history needed so git diff can resolve ancestor commit
+          fetch-depth: 0 # Pulls Git history
 
       - name: Log in to Quay.io
         uses: docker/login-action@v3
@@ -44,16 +44,39 @@ jobs:
           FOSSID_HOST_USERNAME: ${{ secrets.FOSSID_HOST_USERNAME }}
           FOSSID_HOST_TOKEN: ${{ secrets.FOSSID_HOST_TOKEN }}
         run: |
-          # 1. Allow git operations inside container workspace
-          # 2. Run diffscan and stream json to host temp path
+          # 1. Resolve git refs safely
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            # Ensure the target base branch is fetched from origin
+            git fetch origin ${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }} || git fetch origin ${{ github.base_ref }}
+            BASE_REF="origin/${{ github.base_ref }}"
+            COMPARE_REF="HEAD"
+          else
+            BASE_REF="${{ github.event.before }}"
+            if [ -z "$BASE_REF" ] || [ "$BASE_REF" = "0000000000000000000000000000000000000000" ]; then
+              BASE_REF="HEAD~1"
+            fi
+            COMPARE_REF="HEAD"
+          fi
+
+          echo "Running diffscan with base-ref: $BASE_REF and compare-ref: $COMPARE_REF"
+
+          # 2. Run FossID using --base-ref and --compare-ref inside container
           docker run --rm \
             -v "${{ github.workspace }}:/repo" \
             -v "/tmp/fossid:/fossid_config" \
             -w /repo \
             --entrypoint /bin/sh \
             quay.io/fossid/fossid-toolbox:1.5.29 \
-            -c "git config --global --add safe.directory /repo && fossid diffscan --fossid-host '$FOSSID_HOST_USERNAME' --fossid-token '$FOSSID_HOST_TOKEN' --format json --ignore-projects /fossid_config/ignore_projects_fossid" > /tmp/fossid/fossid_raw.json || true
+            -c "git config --global --add safe.directory /repo && \
+                fossid diffscan \
+                  --fossid-host '$FOSSID_HOST_USERNAME' \
+                  --fossid-token '$FOSSID_HOST_TOKEN' \
+                  --base-ref '$BASE_REF' \
+                  --compare-ref '$COMPARE_REF' \
+                  --format json \
+                  --ignore-projects /fossid_config/ignore_projects_fossid" > /tmp/fossid/fossid_raw.json || true
 
+          # 3. Print output to inspect in workflow logs
           echo "=== RAW FOSSID JSON OUTPUT ==="
           cat /tmp/fossid/fossid_raw.json
           echo "=============================="
