@@ -195,29 +195,10 @@ def parse_and_annotate(raw_text: str, sarif_path: Optional[str] = None) -> None:
         )
         match_type: str = item.get("match_type") or "partial"
 
-        local_lic = extract_license_str(local_file_info)
         remote_lic = extract_license_str(remote_file_info) or extract_all_component_licenses(comp)
         raw_url: str = remote_file_info.get("url") or comp.get("url") or ""
 
-        # Extract all remote ranges
-        all_rem_ranges: List[Tuple[int, int]] = []
-        for rb in remote_blocks:
-            if isinstance(rb, dict):
-                rl = rb.get("lines") or {}
-                r_start = rl.get("offset")
-                r_len = rl.get("length")
-                if r_start is not None and r_len is not None:
-                    start_line = r_start + 1
-                    all_rem_ranges.append(
-                        (start_line, start_line + (r_len - 1 if r_len > 0 else 0))
-                    )
-
-        rem_range_strs = [f"{s}-{e}" for s, e in all_rem_ranges]
-        remote_lines_display = (
-            f" (Lines {', '.join(rem_range_strs)})" if rem_range_strs else ""
-        )
-
-        # Extract discrete local blocks
+        # Validate local blocks
         valid_local_blocks: List[Tuple[int, int]] = []
         for b in local_blocks:
             if isinstance(b, dict):
@@ -230,24 +211,38 @@ def parse_and_annotate(raw_text: str, sarif_path: Optional[str] = None) -> None:
                         (start_line, start_line + (length - 1 if length > 0 else 0))
                     )
 
-        if not valid_local_blocks:
-            valid_local_blocks = [(1, 1)]
-
-        primary_r_start, primary_r_end = (
-            all_rem_ranges[0] if all_rem_ranges else (None, None)
-        )
-        if raw_url and "github.com" in raw_url:
-            base_url = raw_url.split("#")[0]
-            remote_link = (
-                f"{base_url}#L{primary_r_start}-L{primary_r_end}"
-                if primary_r_start is not None
-                else base_url
-            )
+        # Pair local blocks with corresponding remote block slices
+        tasks: List[Tuple[Optional[int], Optional[int], List[Any]]] = []
+        if valid_local_blocks:
+            for idx, (l_start, l_end) in enumerate(valid_local_blocks):
+                is_last = (idx == len(valid_local_blocks) - 1)
+                rem_slice = (
+                    remote_blocks[idx:]
+                    if is_last
+                    else ([remote_blocks[idx]] if idx < len(remote_blocks) else [])
+                )
+                tasks.append((l_start, l_end, rem_slice))
         else:
-            remote_link = raw_url
+            tasks.append((1, 1, remote_blocks))
 
-        # Iterate through EACH local block so distinct line alerts are maintained
-        for local_start, local_end in valid_local_blocks:
+        for local_start, local_end, rem_slice in tasks:
+            rem_ranges: List[Tuple[int, int]] = []
+            for rb in rem_slice:
+                if isinstance(rb, dict):
+                    rl = rb.get("lines") or {}
+                    r_start = rl.get("offset")
+                    r_len = rl.get("length")
+                    if r_start is not None and r_len is not None:
+                        start_line = r_start + 1
+                        rem_ranges.append(
+                            (start_line, start_line + (r_len - 1 if r_len > 0 else 0))
+                        )
+
+            rem_range_strs = [f"{s}-{e}" for s, e in rem_ranges]
+            remote_lines_display = (
+                f" (Lines {', '.join(rem_range_strs)})" if rem_range_strs else ""
+            )
+
             dedup_key = (
                 local_file,
                 local_start,
@@ -261,9 +256,24 @@ def parse_and_annotate(raw_text: str, sarif_path: Optional[str] = None) -> None:
                 continue
             seen_findings.add(dedup_key)
 
+            primary_r_start, primary_r_end = (
+                rem_ranges[0] if rem_ranges else (None, None)
+            )
+            if raw_url and "github.com" in raw_url:
+                base_url = raw_url.split("#")[0]
+                remote_link = (
+                    f"{base_url}#L{primary_r_start}-L{primary_r_end}"
+                    if primary_r_start is not None
+                    else base_url
+                )
+            else:
+                remote_link = raw_url
+
             local_link = get_local_link(local_file, local_start, local_end)
-            local_line_str = f" (Lines {local_start}-{local_end})"
-            local_lic_part = f" | License: {local_lic}" if local_lic else ""
+
+            local_line_str = (
+                f" (Lines {local_start}-{local_end})" if local_start is not None else ""
+            )
             remote_lic_part = f" | License: {remote_lic}" if remote_lic else ""
 
             link_section = (
@@ -272,8 +282,9 @@ def parse_and_annotate(raw_text: str, sarif_path: Optional[str] = None) -> None:
                 else f"Link:        {remote_link}"
             )
 
-            pr_annotation_msg = (
-                f"Local:       {local_file}{local_line_str}{local_lic_part}\n"
+            # Symmetrical Card Format (without local license)
+            card_msg = (
+                f"Local:       {local_file}{local_line_str}\n"
                 f"Remote:      {remote_file_path}{remote_lines_display}{remote_lic_part}\n"
                 f"Component:   {purl}\n"
                 f"{link_section}"
@@ -302,8 +313,8 @@ def parse_and_annotate(raw_text: str, sarif_path: Optional[str] = None) -> None:
                                 "markdown": (
                                     f"### FossID Third-Party Component Match\n\n"
                                     f"- **Component:** `{purl}`\n"
-                                    f"- **Detected License:** `{remote_lic or 'Unknown'}`\n"
-                                    f"- **Local Stated License:** `{local_lic or 'Not stated'}`\n\n"
+                                    f"- **Matched License:** `{remote_lic or 'Unknown'}`\n"
+                                    f"- **Remote Source:** `{remote_file_path}`\n\n"
                                     f"**Compliance Policy:**\n"
                                     f"Verify that this external component and its license terms comply "
                                     f"with project open-source guidelines. Consult repository maintainers "
@@ -315,16 +326,11 @@ def parse_and_annotate(raw_text: str, sarif_path: Optional[str] = None) -> None:
                         },
                     )
 
-                    clean_summary = (
-                        f"Matched component '{purl}' ({remote_lic or 'Unknown License'}). "
-                        f"Remote: {remote_file_path}{remote_lines_display}"
-                    )
-
                     sarif_results.append(
                         {
                             "ruleId": rule_id,
                             "level": "error",
-                            "message": {"text": clean_summary},
+                            "message": {"text": card_msg},
                             "locations": [
                                 {
                                     "physicalLocation": {
@@ -333,8 +339,8 @@ def parse_and_annotate(raw_text: str, sarif_path: Optional[str] = None) -> None:
                                             "uriBaseId": "%SRCROOT%",
                                         },
                                         "region": {
-                                            "startLine": local_start,
-                                            "endLine": local_end,
+                                            "startLine": local_start or 1,
+                                            "endLine": local_end or local_start or 1,
                                         },
                                     }
                                 }
@@ -342,7 +348,6 @@ def parse_and_annotate(raw_text: str, sarif_path: Optional[str] = None) -> None:
                             "properties": {
                                 "component": purl,
                                 "remoteFile": remote_file_path,
-                                "remoteLines": remote_lines_display.strip(),
                                 "matchedLicense": remote_lic,
                             },
                         }
@@ -355,11 +360,15 @@ def parse_and_annotate(raw_text: str, sarif_path: Optional[str] = None) -> None:
             )
             title = f"FossID Match: {title_comp}" if title_comp else "FossID Match"
 
-            escaped_msg = escape_github_data(pr_annotation_msg)
+            escaped_msg = escape_github_data(card_msg)
             escaped_title = escape_github_property(title)
             escaped_file = escape_github_property(local_file)
 
-            line_props = f",line={local_start},endLine={local_end}"
+            line_props = (
+                f",line={local_start},endLine={local_end}"
+                if local_start is not None
+                else ""
+            )
             print(
                 f"::error file={escaped_file}{line_props},"
                 f"title={escaped_title}::{escaped_msg}"
@@ -369,13 +378,11 @@ def parse_and_annotate(raw_text: str, sarif_path: Optional[str] = None) -> None:
     if sarif_path:
         write_sarif(sarif_path, sarif_rules, sarif_results)
 
-    # Set step output for GitHub Actions runner
     github_output = os.environ.get("GITHUB_OUTPUT")
     if github_output:
         with open(github_output, "a", encoding="utf-8") as gh_out:
             gh_out.write(f"has_issues={'true' if has_issues else 'false'}\n")
 
-    # Formatter exits 0 because formatting and SARIF creation completed successfully
     sys.exit(0)
 
 
