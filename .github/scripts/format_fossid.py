@@ -195,7 +195,10 @@ def parse_and_annotate(raw_text: str, sarif_path: Optional[str] = None) -> None:
         )
         match_type: str = item.get("match_type") or "partial"
 
-        remote_lic = extract_license_str(remote_file_info) or extract_all_component_licenses(comp)
+        remote_lic = (
+            extract_license_str(remote_file_info)
+            or extract_all_component_licenses(comp)
+        )
         raw_url: str = remote_file_info.get("url") or comp.get("url") or ""
 
         # Validate local blocks
@@ -306,7 +309,9 @@ def parse_and_annotate(raw_text: str, sarif_path: Optional[str] = None) -> None:
                                 "text": f"Third-party match: {artifact or 'External Component'}"
                             },
                             "fullDescription": {
-                                "text": f"FossID detected code matching '{artifact or 'third-party'}'."
+                                "text": (
+                                    f"FossID detected code matching '{artifact or 'third-party'}'."
+                                )
                             },
                             "help": {
                                 "text": f"Component: {purl}\nLicense: {remote_lic}",
@@ -316,9 +321,10 @@ def parse_and_annotate(raw_text: str, sarif_path: Optional[str] = None) -> None:
                                     f"- **Matched License:** `{remote_lic or 'Unknown'}`\n"
                                     f"- **Remote Source:** `{remote_file_path}`\n\n"
                                     f"**Compliance Policy:**\n"
-                                    f"Verify that this external component and its license terms comply "
-                                    f"with project open-source guidelines. Consult repository maintainers "
-                                    f"or the compliance team if an approved exception applies."
+                                    f"Verify that this external component and its license "
+                                    f"terms comply with project open-source guidelines. "
+                                    f"Consult repository maintainers or the compliance team "
+                                    f"if an approved exception applies."
                                 ),
                             },
                             "defaultConfiguration": {"level": "error"},
@@ -378,12 +384,11 @@ def parse_and_annotate(raw_text: str, sarif_path: Optional[str] = None) -> None:
     if sarif_path:
         write_sarif(sarif_path, sarif_rules, sarif_results)
 
-    github_output = os.environ.get("GITHUB_OUTPUT")
-    if github_output:
-        with open(github_output, "a", encoding="utf-8") as gh_out:
-            gh_out.write(f"has_issues={'true' if has_issues else 'false'}\n")
-
-    sys.exit(0)
+    # Exits 1 so the job fails on compliance findings, without needing an extra step
+    if has_issues:
+        sys.exit(1)
+    else:
+        sys.exit(0)
 
 
 def main() -> None:

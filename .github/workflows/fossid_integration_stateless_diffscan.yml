@@ -74,8 +74,8 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Format FossID Results
-        id: format-fossid
+      - name: Evaluate FossID Matches
+        id: evaluate-fossid
         run: |
           python3 .github/scripts/format_fossid.py /tmp/fossid/fossid_raw.json --sarif fossid.sarif
 
@@ -95,9 +95,3 @@ jobs:
           checkout_path: ${{ github.workspace }}
           ref: refs/heads/${{ github.head_ref }}
           sha: ${{ github.event.pull_request.head.sha }}
-
-      - name: License Compliance Policy Verification
-        if: steps.format-fossid.outputs.has_issues == 'true'
-        run: |
-          echo "::error::Open source license matches were identified. Review the Code Scanning alerts to ensure compliance with project licensing policy."
-          exit 1
