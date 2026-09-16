@@ -3,20 +3,22 @@
 FossID Native GitHub Inline Annotator & SARIF Exporter
 Schema-compliant SARIF 2.1.0 with automatic GitHub Code Scanning fingerprinting.
 """
+from __future__ import annotations
+
 import json
 import os
 import re
 import sys
-from urllib.parse import quote
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 
-def escape_github_data(text):
-    """GitHub Actions requires encoding newlines and percent signs for multiline annotations."""
+def escape_github_data(text: str) -> str:
+    """Escape newlines and percent signs for GitHub Actions command payloads."""
     return text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
 
 
-def escape_github_property(text):
-    """GitHub Actions requires encoding colons and commas for command properties."""
+def escape_github_property(text: str) -> str:
+    """Escape colons, commas, newlines, and percent signs for GitHub Actions parameters."""
     return (
         text.replace("%", "%25")
         .replace("\r", "%0D")
@@ -26,8 +28,12 @@ def escape_github_property(text):
     )
 
 
-def get_local_link(file_path, start_line=None, end_line=None):
-    """Constructs a direct GitHub URL to the exact lines in the local repository."""
+def get_local_link(
+    file_path: str,
+    start_line: Optional[int] = None,
+    end_line: Optional[int] = None,
+) -> str:
+    """Construct a direct GitHub URL to the exact lines in the local repository."""
     server_url = os.environ.get("GITHUB_SERVER_URL", "https://github.com")
     repo = os.environ.get("GITHUB_REPOSITORY")
     ref = os.environ.get("GITHUB_HEAD_REF") or os.environ.get("GITHUB_SHA")
@@ -43,16 +49,20 @@ def get_local_link(file_path, start_line=None, end_line=None):
     return base
 
 
-def extract_license_str(container):
-    """Extracts all unique license identifiers from a JSON container."""
+def extract_license_str(container: Any) -> str:
+    """Extract all unique license identifiers from a JSON container."""
     if not container or not isinstance(container, dict):
         return ""
 
-    lic_data = container.get("licenses") if container.get("licenses") is not None else container.get("license")
+    lic_data = (
+        container.get("licenses")
+        if container.get("licenses") is not None
+        else container.get("license")
+    )
     if isinstance(lic_data, str):
         return lic_data.strip()
     elif isinstance(lic_data, list):
-        extracted = []
+        extracted: List[str] = []
         for lic in lic_data:
             if isinstance(lic, str) and lic.strip():
                 extracted.append(lic.strip())
@@ -62,15 +72,20 @@ def extract_license_str(container):
                     extracted.append(name.strip())
         return ", ".join(dict.fromkeys(extracted))
     elif isinstance(lic_data, dict):
-        return (lic_data.get("id") or lic_data.get("name") or lic_data.get("spdx_id") or "").strip()
+        return (
+            lic_data.get("id")
+            or lic_data.get("name")
+            or lic_data.get("spdx_id")
+            or ""
+        ).strip()
     return ""
 
 
-def extract_all_component_licenses(comp):
-    """Extracts and merges licenses across component level and all license_files."""
+def extract_all_component_licenses(comp: Any) -> str:
+    """Extract and merge licenses across component level and all license_files."""
     if not comp or not isinstance(comp, dict):
         return ""
-    collected = []
+    collected: List[str] = []
     direct_lic = extract_license_str(comp)
     if direct_lic:
         collected.extend([l.strip() for l in direct_lic.split(",") if l.strip()])
@@ -84,18 +99,31 @@ def extract_all_component_licenses(comp):
     return ", ".join(dict.fromkeys(collected))
 
 
-def get_rule_id(match_type, author, artifact):
-    """
-    Creates a clean, stable Rule ID compliant with GitHub SARIF requirements.
-    """
-    comp_clean = re.sub(r"[^a-zA-Z0-9._-]", "-", f"{author}-{artifact}".strip("-"))
-    comp_clean = comp_clean if comp_clean else "unspecified"
-    match_clean = re.sub(r"[^a-zA-Z0-9._-]", "-", match_type) or "license"
-    return f"fossid/{match_clean}/{comp_clean}"
+def get_rule_id(match_type: str, author: str, artifact: str) -> str:
+    """Create a clean, stable Rule ID compliant with GitHub SARIF requirements."""
+    author = (author or "").strip().lower()
+    artifact = (artifact or "").strip().lower()
+
+    if author and artifact and artifact.startswith(author):
+        clean_name = artifact
+    elif author and artifact:
+        clean_name = f"{author}-{artifact}"
+    else:
+        clean_name = artifact or author or "unspecified"
+
+    clean_name = re.sub(r"[^a-z0-9._-]", "-", clean_name).strip("-")
+    match_clean = (
+        re.sub(r"[^a-z0-9._-]", "-", match_type.lower())
+        if match_type
+        else "partial"
+    )
+    return f"fossid/{match_clean}/{clean_name}"
 
 
-def write_sarif(path, rules, results):
-    """Outputs a strictly compliant SARIF 2.1.0 JSON file."""
+def write_sarif(
+    path: str, rules: Dict[str, Any], results: List[Dict[str, Any]]
+) -> None:
+    """Output a strictly compliant SARIF 2.1.0 JSON file."""
     sarif = {
         "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
         "version": "2.1.0",
@@ -121,7 +149,8 @@ def write_sarif(path, rules, results):
         sarif_file.write("\n")
 
 
-def parse_and_annotate(raw_text, sarif_path=None):
+def parse_and_annotate(raw_text: str, sarif_path: Optional[str] = None) -> None:
+    """Parse FossID JSON, print inline GitHub annotations, and generate SARIF report."""
     if not raw_text or not raw_text.strip():
         if sarif_path:
             write_sarif(sarif_path, {}, [])
@@ -139,11 +168,10 @@ def parse_and_annotate(raw_text, sarif_path=None):
             write_sarif(sarif_path, {}, [])
         sys.exit(0)
 
-    seen_findings = set()
-    seen_sarif_findings = set()
-    sarif_rules = {}
-    sarif_results = []
-    has_issues = False
+    seen_findings: Set[Tuple[Any, ...]] = set()
+    seen_sarif_findings: Set[Tuple[str, Optional[int], str]] = set()
+    sarif_rules: Dict[str, Any] = {}
+    sarif_results: List[Dict[str, Any]] = []
 
     for item in issues:
         if not isinstance(item, dict):
@@ -151,26 +179,28 @@ def parse_and_annotate(raw_text, sarif_path=None):
 
         # 1. Metadata Extraction
         local_file_info = item.get("local_file") or {}
-        local_file = local_file_info.get("path") or ""
+        local_file: str = local_file_info.get("path") or ""
         local_blocks = (local_file_info.get("highlight") or {}).get("blocks") or []
 
         remote_file_info = item.get("remote_file") or {}
-        remote_file_path = remote_file_info.get("path") or ""
+        remote_file_path: str = remote_file_info.get("path") or ""
         remote_blocks = (remote_file_info.get("highlight") or {}).get("blocks") or []
 
         comp = item.get("component") or {}
-        author = comp.get("author") or ""
-        artifact = comp.get("artifact") or ""
-        ver = comp.get("version") or ""
-        purl = comp.get("purl") or (f"{artifact}@{ver}" if (artifact and ver) else artifact)
-        match_type = item.get("match_type") or "license"
+        author: str = comp.get("author") or ""
+        artifact: str = comp.get("artifact") or ""
+        ver: str = comp.get("version") or ""
+        purl: str = comp.get("purl") or (
+            f"{artifact}@{ver}" if (artifact and ver) else artifact
+        )
+        match_type: str = item.get("match_type") or "partial"
 
         local_lic = extract_license_str(local_file_info)
         remote_lic = extract_license_str(remote_file_info) or extract_all_component_licenses(comp)
-        raw_url = remote_file_info.get("url") or comp.get("url") or ""
+        raw_url: str = remote_file_info.get("url") or comp.get("url") or ""
 
         # 2. Extract block positions
-        valid_local_blocks = []
+        valid_local_blocks: List[Tuple[int, int]] = []
         for b in local_blocks:
             if isinstance(b, dict):
                 lines = b.get("lines") or {}
@@ -178,20 +208,26 @@ def parse_and_annotate(raw_text, sarif_path=None):
                 length = lines.get("length")
                 if start is not None and length is not None:
                     start_line = start + 1
-                    valid_local_blocks.append((start_line, start_line + (length - 1 if length > 0 else 0)))
+                    valid_local_blocks.append(
+                        (start_line, start_line + (length - 1 if length > 0 else 0))
+                    )
 
-        tasks = []
+        tasks: List[Tuple[Optional[int], Optional[int], List[Any]]] = []
         if valid_local_blocks:
             for idx, (l_start, l_end) in enumerate(valid_local_blocks):
                 is_last = (idx == len(valid_local_blocks) - 1)
-                rem_slice = remote_blocks[idx:] if is_last else ([remote_blocks[idx]] if idx < len(remote_blocks) else [])
+                rem_slice = (
+                    remote_blocks[idx:]
+                    if is_last
+                    else ([remote_blocks[idx]] if idx < len(remote_blocks) else [])
+                )
                 tasks.append((l_start, l_end, rem_slice))
         else:
             tasks.append((1, 1, remote_blocks))
 
-        # 3. Process matches and emit results
+        # 3. Process matches and build annotations & SARIF results
         for local_start, local_end, rem_slice in tasks:
-            rem_ranges = []
+            rem_ranges: List[Tuple[int, int]] = []
             for rb in rem_slice:
                 if isinstance(rb, dict):
                     rl = rb.get("lines") or {}
@@ -199,41 +235,62 @@ def parse_and_annotate(raw_text, sarif_path=None):
                     r_len = rl.get("length")
                     if r_start is not None and r_len is not None:
                         start_line = r_start + 1
-                        rem_ranges.append((start_line, start_line + (r_len - 1 if r_len > 0 else 0)))
+                        rem_ranges.append(
+                            (start_line, start_line + (r_len - 1 if r_len > 0 else 0))
+                        )
 
             rem_range_strs = [f"{s}-{e}" for s, e in rem_ranges]
-            remote_lines_display = f" (Lines {', '.join(rem_range_strs)})" if rem_range_strs else ""
+            remote_lines_display = (
+                f" (Lines {', '.join(rem_range_strs)})" if rem_range_strs else ""
+            )
 
-            # Deduplicate items
-            dedup_key = (local_file, local_start, local_end, purl, remote_file_path, remote_lic, tuple(rem_range_strs))
+            dedup_key = (
+                local_file,
+                local_start,
+                local_end,
+                purl,
+                remote_file_path,
+                remote_lic,
+                tuple(rem_range_strs),
+            )
             if dedup_key in seen_findings:
                 continue
             seen_findings.add(dedup_key)
 
-            # Build links
-            primary_r_start, primary_r_end = rem_ranges[0] if rem_ranges else (None, None)
+            primary_r_start, primary_r_end = (
+                rem_ranges[0] if rem_ranges else (None, None)
+            )
             if raw_url and "github.com" in raw_url:
                 base_url = raw_url.split("#")[0]
-                remote_link = f"{base_url}#L{primary_r_start}-L{primary_r_end}" if primary_r_start is not None else base_url
+                remote_link = (
+                    f"{base_url}#L{primary_r_start}-L{primary_r_end}"
+                    if primary_r_start is not None
+                    else base_url
+                )
             else:
                 remote_link = raw_url
 
             local_link = get_local_link(local_file, local_start, local_end)
 
-            local_line_str = f" (Lines {local_start}-{local_end})" if local_start is not None else ""
+            local_line_str = (
+                f" (Lines {local_start}-{local_end})" if local_start is not None else ""
+            )
             local_lic_part = f" | License: {local_lic}" if local_lic else ""
             remote_lic_part = f" | License: {remote_lic}" if remote_lic else ""
 
-            link_section = f"Local Link:  {local_link}\nRemote Link: {remote_link}" if local_link else f"Link:        {remote_link}"
+            link_section = (
+                f"Local Link:  {local_link}\nRemote Link: {remote_link}"
+                if local_link
+                else f"Link:        {remote_link}"
+            )
 
-            msg = (
+            pr_annotation_msg = (
                 f"Local:       {local_file}{local_line_str}{local_lic_part}\n"
                 f"Remote:      {remote_file_path}{remote_lines_display}{remote_lic_part}\n"
                 f"Component:   {purl}\n"
                 f"{link_section}"
             )
 
-            # Build valid SARIF result
             if sarif_path and local_file:
                 rule_id = get_rule_id(match_type, author, artifact)
                 sarif_key = (local_file, local_start, rule_id)
@@ -241,24 +298,36 @@ def parse_and_annotate(raw_text, sarif_path=None):
                 if sarif_key not in seen_sarif_findings:
                     seen_sarif_findings.add(sarif_key)
 
-                    rule_desc = f"FossID detected code matching component '{artifact or 'third-party'}' ({remote_lic or 'unknown license'})."
+                    rule_desc = (
+                        f"FossID detected code matching '{artifact or 'third-party'}' "
+                        f"({remote_lic or 'unknown license'})."
+                    )
                     sarif_rules.setdefault(
                         rule_id,
                         {
                             "id": rule_id,
                             "name": "FossIDLicenseMatch",
-                            "shortDescription": {"text": f"Third-party match: {artifact or 'External Component'}"},
+                            "shortDescription": {
+                                "text": f"Third-party match: {artifact or 'External Component'}"
+                            },
                             "fullDescription": {"text": rule_desc},
                             "help": {
-                                "text": f"Component: {purl}\nLicense: {remote_lic}\nRemote: {remote_file_path}",
+                                "text": (
+                                    f"Component: {purl}\n"
+                                    f"License: {remote_lic}\n"
+                                    f"Remote: {remote_file_path}"
+                                ),
                                 "markdown": (
                                     f"### FossID Third-Party Match\n\n"
                                     f"- **Component:** `{purl}`\n"
                                     f"- **Matched License:** `{remote_lic or 'Unknown'}`\n"
                                     f"- **Local License:** `{local_lic or 'Not stated'}`\n"
-                                    f"- **Remote Source:** [{remote_file_path}]({remote_link})\n\n"
+                                    f"- **Remote Source:** "
+                                    f"[{remote_file_path}{remote_lines_display}]({remote_link})\n\n"
+                                    f"💡 **Triage Instructions:**\n"
                                     f"If this match is approved or an acceptable false positive, "
-                                    f"dismiss it with a comment in this Code Scanning alert."
+                                    f"dismiss this alert with an explanation comment. "
+                                    f"GitHub will remember your dismissal across future commits."
                                 ),
                             },
                             "defaultConfiguration": {"level": "error"},
@@ -266,22 +335,26 @@ def parse_and_annotate(raw_text, sarif_path=None):
                         },
                     )
 
-                    # Strictly valid SARIF 2.1.0 result object
+                    clean_summary = (
+                        f"Matched component '{purl}' ({remote_lic or 'Unknown License'}). "
+                        f"Identified in remote source: {remote_file_path}"
+                    )
+
                     sarif_results.append(
                         {
                             "ruleId": rule_id,
                             "level": "error",
-                            "message": {"text": msg},
+                            "message": {"text": clean_summary},
                             "locations": [
                                 {
                                     "physicalLocation": {
                                         "artifactLocation": {
                                             "uri": local_file,
-                                            "uriBaseId": "%SRCROOT%"
+                                            "uriBaseId": "%SRCROOT%",
                                         },
                                         "region": {
                                             "startLine": local_start or 1,
-                                            "endLine": local_end or local_start or 1
+                                            "endLine": local_end or local_start or 1,
                                         },
                                     }
                                 }
@@ -289,22 +362,31 @@ def parse_and_annotate(raw_text, sarif_path=None):
                             "properties": {
                                 "component": purl,
                                 "remoteFile": remote_file_path,
-                                "matchedLicense": remote_lic
-                            }
+                                "matchedLicense": remote_lic,
+                            },
                         }
                     )
 
-            # Workflow inline annotation command (marked as error)
-            title_comp = f"{artifact} ({remote_lic})" if (artifact and remote_lic) else (artifact or (f"({remote_lic})" if remote_lic else ""))
+            title_comp = (
+                f"{artifact} ({remote_lic})"
+                if (artifact and remote_lic)
+                else (artifact or (f"({remote_lic})" if remote_lic else ""))
+            )
             title = f"FossID Match: {title_comp}" if title_comp else "FossID Match"
 
-            escaped_msg = escape_github_data(msg)
+            escaped_msg = escape_github_data(pr_annotation_msg)
             escaped_title = escape_github_property(title)
             escaped_file = escape_github_property(local_file)
 
-            line_props = f",line={local_start},endLine={local_end}" if local_start is not None else ""
-            print(f"::error file={escaped_file}{line_props},title={escaped_title}::{escaped_msg}")
-            has_issues = True
+            line_props = (
+                f",line={local_start},endLine={local_end}"
+                if local_start is not None
+                else ""
+            )
+            print(
+                f"::error file={escaped_file}{line_props},"
+                f"title={escaped_title}::{escaped_msg}"
+            )
 
     if sarif_path:
         write_sarif(sarif_path, sarif_rules, sarif_results)
@@ -312,9 +394,10 @@ def parse_and_annotate(raw_text, sarif_path=None):
     sys.exit(0)
 
 
-def main():
-    input_path = None
-    sarif_path = None
+def main() -> None:
+    """Parse command-line arguments and run the FossID annotator and SARIF exporter."""
+    input_path: Optional[str] = None
+    sarif_path: Optional[str] = None
     args = iter(sys.argv[1:])
     for arg in args:
         if arg == "--sarif":
