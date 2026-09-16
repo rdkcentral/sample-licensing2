@@ -199,6 +199,7 @@ def parse_and_annotate(raw_text: str, sarif_path: Optional[str] = None) -> None:
         remote_lic = extract_license_str(remote_file_info) or extract_all_component_licenses(comp)
         raw_url: str = remote_file_info.get("url") or comp.get("url") or ""
 
+        # Extract all remote ranges
         all_rem_ranges: List[Tuple[int, int]] = []
         for rb in remote_blocks:
             if isinstance(rb, dict):
@@ -216,6 +217,7 @@ def parse_and_annotate(raw_text: str, sarif_path: Optional[str] = None) -> None:
             f" (Lines {', '.join(rem_range_strs)})" if rem_range_strs else ""
         )
 
+        # Extract discrete local blocks
         valid_local_blocks: List[Tuple[int, int]] = []
         for b in local_blocks:
             if isinstance(b, dict):
@@ -228,25 +230,8 @@ def parse_and_annotate(raw_text: str, sarif_path: Optional[str] = None) -> None:
                         (start_line, start_line + (length - 1 if length > 0 else 0))
                     )
 
-        if valid_local_blocks:
-            local_start = valid_local_blocks[0][0]
-            local_end = valid_local_blocks[-1][1]
-        else:
-            local_start = 1
-            local_end = 1
-
-        dedup_key = (
-            local_file,
-            local_start,
-            local_end,
-            purl,
-            remote_file_path,
-            remote_lic,
-            tuple(rem_range_strs),
-        )
-        if dedup_key in seen_findings:
-            continue
-        seen_findings.add(dedup_key)
+        if not valid_local_blocks:
+            valid_local_blocks = [(1, 1)]
 
         primary_r_start, primary_r_end = (
             all_rem_ranges[0] if all_rem_ranges else (None, None)
@@ -261,126 +246,137 @@ def parse_and_annotate(raw_text: str, sarif_path: Optional[str] = None) -> None:
         else:
             remote_link = raw_url
 
-        local_link = get_local_link(local_file, local_start, local_end)
+        # Iterate through EACH local block so distinct line alerts are maintained
+        for local_start, local_end in valid_local_blocks:
+            dedup_key = (
+                local_file,
+                local_start,
+                local_end,
+                purl,
+                remote_file_path,
+                remote_lic,
+                tuple(rem_range_strs),
+            )
+            if dedup_key in seen_findings:
+                continue
+            seen_findings.add(dedup_key)
 
-        local_line_str = (
-            f" (Lines {local_start}-{local_end})" if local_start is not None else ""
-        )
-        local_lic_part = f" | License: {local_lic}" if local_lic else ""
-        remote_lic_part = f" | License: {remote_lic}" if remote_lic else ""
+            local_link = get_local_link(local_file, local_start, local_end)
+            local_line_str = f" (Lines {local_start}-{local_end})"
+            local_lic_part = f" | License: {local_lic}" if local_lic else ""
+            remote_lic_part = f" | License: {remote_lic}" if remote_lic else ""
 
-        link_section = (
-            f"Local Link:  {local_link}\nRemote Link: {remote_link}"
-            if local_link
-            else f"Link:        {remote_link}"
-        )
+            link_section = (
+                f"Local Link:  {local_link}\nRemote Link: {remote_link}"
+                if local_link
+                else f"Link:        {remote_link}"
+            )
 
-        pr_annotation_msg = (
-            f"Local:       {local_file}{local_line_str}{local_lic_part}\n"
-            f"Remote:      {remote_file_path}{remote_lines_display}{remote_lic_part}\n"
-            f"Component:   {purl}\n"
-            f"{link_section}"
-        )
+            pr_annotation_msg = (
+                f"Local:       {local_file}{local_line_str}{local_lic_part}\n"
+                f"Remote:      {remote_file_path}{remote_lines_display}{remote_lic_part}\n"
+                f"Component:   {purl}\n"
+                f"{link_section}"
+            )
 
-        if sarif_path and local_file:
-            rule_id = get_rule_id(match_type, author, artifact)
-            sarif_key = (local_file, local_start, rule_id)
+            if sarif_path and local_file:
+                rule_id = get_rule_id(match_type, author, artifact)
+                sarif_key = (local_file, local_start, rule_id)
 
-            if sarif_key not in seen_sarif_findings:
-                seen_sarif_findings.add(sarif_key)
+                if sarif_key not in seen_sarif_findings:
+                    seen_sarif_findings.add(sarif_key)
 
-                # Professional, neutral compliance definition without prompting dismissals
-                sarif_rules.setdefault(
-                    rule_id,
-                    {
-                        "id": rule_id,
-                        "name": "FossIDLicenseMatch",
-                        "shortDescription": {
-                            "text": f"Third-party match: {artifact or 'External Component'}"
+                    sarif_rules.setdefault(
+                        rule_id,
+                        {
+                            "id": rule_id,
+                            "name": "FossIDLicenseMatch",
+                            "shortDescription": {
+                                "text": f"Third-party match: {artifact or 'External Component'}"
+                            },
+                            "fullDescription": {
+                                "text": f"FossID detected code matching '{artifact or 'third-party'}'."
+                            },
+                            "help": {
+                                "text": f"Component: {purl}\nLicense: {remote_lic}",
+                                "markdown": (
+                                    f"### FossID Third-Party Component Match\n\n"
+                                    f"- **Component:** `{purl}`\n"
+                                    f"- **Detected License:** `{remote_lic or 'Unknown'}`\n"
+                                    f"- **Local Stated License:** `{local_lic or 'Not stated'}`\n\n"
+                                    f"**Compliance Policy:**\n"
+                                    f"Verify that this external component and its license terms comply "
+                                    f"with project open-source guidelines. Consult repository maintainers "
+                                    f"or the compliance team if an approved exception applies."
+                                ),
+                            },
+                            "defaultConfiguration": {"level": "error"},
+                            "properties": {"tags": ["license-compliance", "fossid"]},
                         },
-                        "fullDescription": {
-                            "text": f"FossID detected code matching '{artifact or 'third-party'}'."
-                        },
-                        "help": {
-                            "text": f"Component: {purl}\nLicense: {remote_lic}",
-                            "markdown": (
-                                f"### FossID Third-Party Component Match\n\n"
-                                f"- **Component:** `{purl}`\n"
-                                f"- **Detected License:** `{remote_lic or 'Unknown'}`\n"
-                                f"- **Local Stated License:** `{local_lic or 'Not stated'}`\n\n"
-                                f"**Compliance Policy:**\n"
-                                f"Verify that this external component and its license terms comply "
-                                f"with project open-source guidelines. Consult the repository maintainers "
-                                f"or compliance team if an approved exception or attribution notice applies."
-                            ),
-                        },
-                        "defaultConfiguration": {"level": "error"},
-                        "properties": {"tags": ["license-compliance", "fossid"]},
-                    },
-                )
+                    )
 
-                clean_summary = (
-                    f"Matched component '{purl}' ({remote_lic or 'Unknown License'}). "
-                    f"Remote: {remote_file_path}{remote_lines_display}"
-                )
+                    clean_summary = (
+                        f"Matched component '{purl}' ({remote_lic or 'Unknown License'}). "
+                        f"Remote: {remote_file_path}{remote_lines_display}"
+                    )
 
-                sarif_results.append(
-                    {
-                        "ruleId": rule_id,
-                        "level": "error",
-                        "message": {"text": clean_summary},
-                        "locations": [
-                            {
-                                "physicalLocation": {
-                                    "artifactLocation": {
-                                        "uri": local_file,
-                                        "uriBaseId": "%SRCROOT%",
-                                    },
-                                    "region": {
-                                        "startLine": local_start,
-                                        "endLine": local_end,
-                                    },
+                    sarif_results.append(
+                        {
+                            "ruleId": rule_id,
+                            "level": "error",
+                            "message": {"text": clean_summary},
+                            "locations": [
+                                {
+                                    "physicalLocation": {
+                                        "artifactLocation": {
+                                            "uri": local_file,
+                                            "uriBaseId": "%SRCROOT%",
+                                        },
+                                        "region": {
+                                            "startLine": local_start,
+                                            "endLine": local_end,
+                                        },
+                                    }
                                 }
-                            }
-                        ],
-                        "properties": {
-                            "component": purl,
-                            "remoteFile": remote_file_path,
-                            "remoteLines": remote_lines_display.strip(),
-                            "matchedLicense": remote_lic,
-                        },
-                    }
-                )
+                            ],
+                            "properties": {
+                                "component": purl,
+                                "remoteFile": remote_file_path,
+                                "remoteLines": remote_lines_display.strip(),
+                                "matchedLicense": remote_lic,
+                            },
+                        }
+                    )
 
-        title_comp = (
-            f"{artifact} ({remote_lic})"
-            if (artifact and remote_lic)
-            else (artifact or (f"({remote_lic})" if remote_lic else ""))
-        )
-        title = f"FossID Match: {title_comp}" if title_comp else "FossID Match"
+            title_comp = (
+                f"{artifact} ({remote_lic})"
+                if (artifact and remote_lic)
+                else (artifact or (f"({remote_lic})" if remote_lic else ""))
+            )
+            title = f"FossID Match: {title_comp}" if title_comp else "FossID Match"
 
-        escaped_msg = escape_github_data(pr_annotation_msg)
-        escaped_title = escape_github_property(title)
-        escaped_file = escape_github_property(local_file)
+            escaped_msg = escape_github_data(pr_annotation_msg)
+            escaped_title = escape_github_property(title)
+            escaped_file = escape_github_property(local_file)
 
-        line_props = (
-            f",line={local_start},endLine={local_end}"
-            if local_start is not None
-            else ""
-        )
-        print(
-            f"::error file={escaped_file}{line_props},"
-            f"title={escaped_title}::{escaped_msg}"
-        )
-        has_issues = True
+            line_props = f",line={local_start},endLine={local_end}"
+            print(
+                f"::error file={escaped_file}{line_props},"
+                f"title={escaped_title}::{escaped_msg}"
+            )
+            has_issues = True
 
     if sarif_path:
         write_sarif(sarif_path, sarif_rules, sarif_results)
 
-    if has_issues:
-        sys.exit(1)
-    else:
-        sys.exit(0)
+    # Set step output for GitHub Actions runner
+    github_output = os.environ.get("GITHUB_OUTPUT")
+    if github_output:
+        with open(github_output, "a", encoding="utf-8") as gh_out:
+            gh_out.write(f"has_issues={'true' if has_issues else 'false'}\n")
+
+    # Formatter exits 0 because formatting and SARIF creation completed successfully
+    sys.exit(0)
 
 
 def main() -> None:

@@ -79,13 +79,12 @@ jobs:
         run: |
           python3 .github/scripts/format_fossid.py /tmp/fossid/fossid_raw.json --sarif fossid.sarif
 
-      - name: Archive SARIF Report for Debugging
-        uses: actions/upload-artifact@v4
+      - name: Print Generated SARIF
         if: always()
-        with:
-          name: fossid-sarif-report
-          path: fossid.sarif
-          retention-days: 14
+        run: |
+          echo "=== GENERATED FOSSID SARIF OUTPUT ==="
+          cat fossid.sarif
+          echo "====================================="
 
       - name: Upload FossID SARIF
         uses: github/codeql-action/upload-sarif@v4
@@ -97,8 +96,8 @@ jobs:
           ref: refs/heads/${{ github.head_ref }}
           sha: ${{ github.event.pull_request.head.sha }}
 
-      - name: Verify Scan Outcome
-        if: steps.format-fossid.outcome == 'failure'
+      - name: License Compliance Policy Verification
+        if: steps.format-fossid.outputs.has_issues == 'true'
         run: |
-          echo "::error::FossID detected open source license compliance matches on this PR. Refer to Code Scanning alerts for details and ensure component terms comply with project licensing policy."
+          echo "::error::Open source license matches were identified. Review the Code Scanning alerts to ensure compliance with project licensing policy."
           exit 1
