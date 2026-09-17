@@ -1,0 +1,100 @@
+name: Fossid Pre-merge Stateless Diff Scan
+
+on:
+  workflow_call:
+    secrets:
+      FOSSID_CONTAINER_USERNAME:
+        required: true
+      FOSSID_CONTAINER_PASSWORD:
+        required: true
+      FOSSID_HOST_USERNAME:
+        required: true
+      FOSSID_HOST_TOKEN:
+        required: true
+
+jobs:
+  run-diffscan:
+    name: Fossid Annotate PR
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Log in to Quay.io
+        uses: docker/login-action@v3
+        with:
+          registry: quay.io
+          username: ${{ secrets.FOSSID_CONTAINER_USERNAME }}
+          password: ${{ secrets.FOSSID_CONTAINER_PASSWORD }}
+
+      - name: Fetch Ignore List
+        run: |
+          mkdir -p /tmp/fossid
+          curl -sSL https://raw.githubusercontent.com/rdkcentral/build_tools_workflows/refs/heads/develop/ignore_projects_fossid -o /tmp/fossid/ignore_projects_fossid
+
+      - name: Run FossID Toolbox Diffscan (Docker)
+        env:
+          FOSSID_HOST_USERNAME: ${{ secrets.FOSSID_HOST_USERNAME }}
+          FOSSID_HOST_TOKEN: ${{ secrets.FOSSID_HOST_TOKEN }}
+        run: |
+          git fetch origin ${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }} || git fetch origin ${{ github.base_ref }}
+          BASE_REF="origin/${{ github.base_ref }}"
+          COMPARE_REF="HEAD"
+
+          echo "Running diffscan with base-ref: $BASE_REF and compare-ref: $COMPARE_REF"
+
+          # Pass secrets safely as container environment variables
+          docker run --rm \
+            -v "${{ github.workspace }}:/repo" \
+            -v "/tmp/fossid:/fossid_config" \
+            -w /repo \
+            -e FOSSID_HOST_USERNAME \
+            -e FOSSID_HOST_TOKEN \
+            -e BASE_REF="$BASE_REF" \
+            -e COMPARE_REF="$COMPARE_REF" \
+            --entrypoint /bin/sh \
+            quay.io/fossid/fossid-toolbox:1.5.29 \
+            -c 'git config --global --add safe.directory /repo && \
+                fossid diffscan \
+                  --fossid-host "$FOSSID_HOST_USERNAME" \
+                  --fossid-token "$FOSSID_HOST_TOKEN" \
+                  --base-ref "$BASE_REF" \
+                  --compare-ref "$COMPARE_REF" \
+                  --format json \
+                  --ignore-projects /fossid_config/ignore_projects_fossid' > /tmp/fossid/fossid_raw.json || true
+
+          echo "=== RAW FOSSID JSON OUTPUT ==="
+          cat /tmp/fossid/fossid_raw.json
+          echo "=============================="
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Evaluate FossID Matches
+        id: evaluate-fossid
+        run: |
+          python3 .github/scripts/format_fossid.py /tmp/fossid/fossid_raw.json --sarif fossid.sarif
+
+      - name: Print Generated SARIF
+        run: |
+          echo "=== GENERATED FOSSID SARIF OUTPUT ==="
+          cat fossid.sarif
+          echo "====================================="
+
+      - name: Upload FossID SARIF
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: fossid.sarif
+          category: fossid-license-compliance
+          checkout_path: ${{ github.workspace }}
+          ref: refs/heads/${{ github.head_ref }}
+          sha: ${{ github.event.pull_request.head.sha }}
