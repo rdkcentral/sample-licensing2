@@ -4,6 +4,21 @@
 
 namespace SampleTest {
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
 void initializeSDKClient() {
     std::shared_ptr<alexaClientSDK::defaultClient::DefaultClient> client = alexaClientSDK::defaultClient::DefaultClient::create(
         deviceInfo,
