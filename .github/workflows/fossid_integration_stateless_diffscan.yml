@@ -50,7 +50,7 @@ jobs:
 
           echo "Running diffscan with base-ref: $BASE_REF and compare-ref: $COMPARE_REF"
 
-          # Pass secrets as container environment variables with -e
+          # Pass secrets safely as container environment variables
           docker run --rm \
             -v "${{ github.workspace }}:/repo" \
             -v "/tmp/fossid:/fossid_config" \
@@ -85,7 +85,6 @@ jobs:
           python3 .github/scripts/format_fossid.py /tmp/fossid/fossid_raw.json --sarif fossid.sarif
 
       - name: Print Generated SARIF
-        if: always()
         run: |
           echo "=== GENERATED FOSSID SARIF OUTPUT ==="
           cat fossid.sarif
@@ -93,7 +92,6 @@ jobs:
 
       - name: Upload FossID SARIF
         uses: github/codeql-action/upload-sarif@v4
-        if: always()
         with:
           sarif_file: fossid.sarif
           category: fossid-license-compliance

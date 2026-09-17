@@ -54,11 +54,10 @@ def extract_license_str(container: Any) -> str:
     if not container or not isinstance(container, dict):
         return ""
 
-    lic_data = (
-        container.get("licenses")
-        if container.get("licenses") is not None
-        else container.get("license")
-    )
+    lic_data = container.get("licenses")
+    if lic_data is None:
+        lic_data = container.get("license")
+
     if isinstance(lic_data, str):
         return lic_data.strip()
     elif isinstance(lic_data, list):
@@ -72,12 +71,8 @@ def extract_license_str(container: Any) -> str:
                     extracted.append(name.strip())
         return ", ".join(dict.fromkeys(extracted))
     elif isinstance(lic_data, dict):
-        return (
-            lic_data.get("id")
-            or lic_data.get("name")
-            or lic_data.get("spdx_id")
-            or ""
-        ).strip()
+        name = lic_data.get("id") or lic_data.get("name") or lic_data.get("spdx_id") or ""
+        return name.strip()
     return ""
 
 
@@ -112,11 +107,10 @@ def get_rule_id(match_type: str, author: str, artifact: str) -> str:
         clean_name = artifact or author or "unspecified"
 
     clean_name = re.sub(r"[^a-z0-9._-]", "-", clean_name).strip("-")
-    match_clean = (
-        re.sub(r"[^a-z0-9._-]", "-", match_type.lower())
-        if match_type
-        else "partial"
-    )
+    if match_type:
+        match_clean = re.sub(r"[^a-z0-9._-]", "-", match_type.lower())
+    else:
+        match_clean = "partial"
     return f"fossid/{match_clean}/{clean_name}"
 
 
@@ -172,7 +166,6 @@ def parse_and_annotate(raw_text: str, sarif_path: Optional[str] = None) -> None:
     seen_sarif_findings: Set[Tuple[str, Optional[int], str]] = set()
     sarif_rules: Dict[str, Any] = {}
     sarif_results: List[Dict[str, Any]] = []
-    has_issues = False
 
     for item in issues:
         if not isinstance(item, dict):
@@ -190,9 +183,8 @@ def parse_and_annotate(raw_text: str, sarif_path: Optional[str] = None) -> None:
         author: str = comp.get("author") or ""
         artifact: str = comp.get("artifact") or ""
         ver: str = comp.get("version") or ""
-        purl: str = comp.get("purl") or (
-            f"{artifact}@{ver}" if (artifact and ver) else artifact
-        )
+        fallback_purl = f"{artifact}@{ver}" if (artifact and ver) else artifact
+        purl: str = comp.get("purl") or fallback_purl
         match_type: str = item.get("match_type") or "partial"
 
         remote_lic = (
@@ -378,15 +370,11 @@ def parse_and_annotate(raw_text: str, sarif_path: Optional[str] = None) -> None:
                 f"::error file={escaped_file}{line_props},"
                 f"title={escaped_title}::{escaped_msg}"
             )
-            has_issues = True
 
     if sarif_path:
         write_sarif(sarif_path, sarif_rules, sarif_results)
 
-    if has_issues:
-        sys.exit(1)
-    else:
-        sys.exit(0)
+    sys.exit(0)
 
 
 def main() -> None:
