@@ -4,21 +4,61 @@
 
 namespace SampleTest {
 
-    void createSampleMediaPlayer() {
-        static const unsigned int AUDIO_MEDIAPLAYER_POOL_SIZE_DEFAULT = 2;
-        static const std::string SAMPLE_APP_CONFIG_KEY("sampleApp");
-        static const std::string AUDIO_MEDIAPLAYER_POOL_SIZE_KEY("audioMediaPlayerPoolSize");
-
-        static const size_t MAX_READERS = 10;
-        static const size_t WORD_SIZE = 2;
-        static const unsigned int SAMPLE_RATE_HZ = 16000;
-        static const unsigned int NUM_CHANNELS = 1;
-
-        auto audioFactory = std::make_shared<alexaClientSDK::applicationUtilities::resources::audio::AudioFactory>();
-        auto alertStorage = alexaClientSDK::acsdkAlerts::storage::SQLiteAlertStorage::create(config, audioFactory->alerts(), metricRecorder);
-        auto messageStorage = alexaClientSDK::certifiedSender::SQLiteMessageStorage::create(config);
-        auto notificationsStorage = alexaClientSDK::acsdkNotifications::SQLiteNotificationsStorage::create(config);
-        auto deviceSettingsStorage = alexaClientSDK::settings::storage::SQLiteDeviceSettingStorage::create(config);
-    }
+void initializeSDKClient() {
+    std::shared_ptr<alexaClientSDK::defaultClient::DefaultClient> client = alexaClientSDK::defaultClient::DefaultClient::create(
+        deviceInfo,
+        customerDataManager,
+        m_externalMusicProviderMediaPlayersMap,
+        m_externalMusicProviderSpeakersMap,
+        m_adapterToCreateFuncMap,
+        m_speakMediaPlayer,
+        std::move(audioMediaPlayerFactory),
+        m_alertsMediaPlayer,
+        m_notificationsMediaPlayer,
+        m_bluetoothMediaPlayer,
+        m_ringtoneMediaPlayer,
+        m_systemSoundMediaPlayer,
+        speakerMediaInterfaces->speaker,
+        audioSpeakers,
+        alertsMediaInterfaces->speaker,
+        notificationMediaInterfaces->speaker,
+        bluetoothMediaInterfaces->speaker,
+        ringtoneMediaInterfaces->speaker,
+        systemSoundMediaInterfaces->speaker,
+        {},
+        nullptr,
+        audioFactory,
+        authDelegate,
+        std::move(alertStorage),
+        std::move(messageStorage),
+        std::move(notificationsStorage),
+        std::move(deviceSettingsStorage),
+        nullptr,
+        miscStorage,
+        { userInterfaceManager },
+        { userInterfaceManager },
+        std::move(internetConnectionMonitor),
+        displayCardsSupported,
+        m_capabilitiesDelegate,
+        contextManager,
+        transportFactory,
+        avsGatewayManager,
+        localeAssetsManager,
+        {},
+        nullptr,
+        firmwareVersion,
+        true,
+        nullptr,
+        nullptr,
+        metricRecorder,
+        nullptr,
+        nullptr,
+        std::make_shared<alexaClientSDK::sampleApp::ExternalCapabilitiesBuilder>(deviceInfo),
+        std::make_shared<alexaClientSDK::capabilityAgents::speakerManager::DefaultChannelVolumeFactory>(),
+        true,
+        std::make_shared<alexaClientSDK::acl::MessageRouterFactory>(),
+        nullptr,
+        tapToTalkAudioProvider);
+}
 
 }

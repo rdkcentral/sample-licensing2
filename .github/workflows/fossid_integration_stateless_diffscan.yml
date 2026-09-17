@@ -50,20 +50,25 @@ jobs:
 
           echo "Running diffscan with base-ref: $BASE_REF and compare-ref: $COMPARE_REF"
 
+          # Pass secrets as container environment variables with -e
           docker run --rm \
             -v "${{ github.workspace }}:/repo" \
             -v "/tmp/fossid:/fossid_config" \
             -w /repo \
+            -e FOSSID_HOST_USERNAME \
+            -e FOSSID_HOST_TOKEN \
+            -e BASE_REF="$BASE_REF" \
+            -e COMPARE_REF="$COMPARE_REF" \
             --entrypoint /bin/sh \
             quay.io/fossid/fossid-toolbox:1.5.29 \
-            -c "git config --global --add safe.directory /repo && \
+            -c 'git config --global --add safe.directory /repo && \
                 fossid diffscan \
-                  --fossid-host '$FOSSID_HOST_USERNAME' \
-                  --fossid-token '$FOSSID_HOST_TOKEN' \
-                  --base-ref '$BASE_REF' \
-                  --compare-ref '$COMPARE_REF' \
+                  --fossid-host "$FOSSID_HOST_USERNAME" \
+                  --fossid-token "$FOSSID_HOST_TOKEN" \
+                  --base-ref "$BASE_REF" \
+                  --compare-ref "$COMPARE_REF" \
                   --format json \
-                  --ignore-projects /fossid_config/ignore_projects_fossid" > /tmp/fossid/fossid_raw.json || true
+                  --ignore-projects /fossid_config/ignore_projects_fossid' > /tmp/fossid/fossid_raw.json || true
 
           echo "=== RAW FOSSID JSON OUTPUT ==="
           cat /tmp/fossid/fossid_raw.json
