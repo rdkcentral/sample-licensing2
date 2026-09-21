@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 FossID Native GitHub Inline Annotator & SARIF Exporter
-Schema-compliant SARIF 2.1.0 without deduplication.
+Schema-compliant SARIF 2.1.0
 """
 from __future__ import annotations
 
@@ -131,6 +131,11 @@ def write_sarif(
                         "rules": list(rules.values()),
                     }
                 },
+                "originalUriBaseIds": {
+                    "%SRCROOT%": {
+                        "description": {"text": "The root of the source repository."}
+                    }
+                },
                 "automationDetails": {
                     "id": "fossid-license-compliance/"
                 },
@@ -164,7 +169,6 @@ def parse_and_annotate(raw_text: str, sarif_path: Optional[str] = None) -> None:
 
     sarif_rules: Dict[str, Any] = {}
     sarif_results: List[Dict[str, Any]] = []
-    has_issues = False
 
     for item in issues:
         if not isinstance(item, dict):
@@ -229,7 +233,6 @@ def parse_and_annotate(raw_text: str, sarif_path: Optional[str] = None) -> None:
         if not valid_local_blocks:
             valid_local_blocks = [(1, 1)]
 
-        # Process every raw local block without deduplication
         for local_start, local_end in valid_local_blocks:
             primary_r_start, primary_r_end = (
                 valid_remote_blocks[0] if valid_remote_blocks else (None, None)
@@ -344,16 +347,12 @@ def parse_and_annotate(raw_text: str, sarif_path: Optional[str] = None) -> None:
                 f"::error file={escaped_file}{line_props},"
                 f"title={escaped_title}::{escaped_msg}"
             )
-            has_issues = True
 
     if sarif_path:
         write_sarif(sarif_path, sarif_rules, sarif_results)
 
-    # Exit code 1 ensures GitHub Action check turns RED (X) on findings
-    if has_issues:
-        sys.exit(1)
-    else:
-        sys.exit(0)
+    # Exits 0 so GitHub's native Code Scanning engine controls PR pass/fail gate
+    sys.exit(0)
 
 
 def main() -> None:

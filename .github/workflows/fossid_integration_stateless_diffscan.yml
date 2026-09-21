@@ -62,7 +62,7 @@ jobs:
             -e BASE_REF="$BASE_REF" \
             -e COMPARE_REF="$COMPARE_REF" \
             --entrypoint /bin/sh \
-            quay.io/fossid/fossid-toolbox:1.5.29 \
+            quay.io/fossid/fossid-toolbox:1.5.29@sha256:f6f2537454784b40b98edaec8faddec54ea95d103293e9fd0d2623cfc7adff20 \
             -c 'git config --global --add safe.directory /repo && \
                 fossid diffscan \
                   --fossid-host "$FOSSID_HOST_USERNAME" \
@@ -72,10 +72,10 @@ jobs:
                   --format json \
                   --ignore-projects /fossid_config/ignore_projects_fossid' > /tmp/fossid/fossid_raw.json || true
 
-          # Guard check: Ensure we didn't get an empty file or fatal network failure
           if [ ! -s /tmp/fossid/fossid_raw.json ]; then
             exit 1
           fi
+
           echo "=== RAW FOSSID JSON OUTPUT ==="
           cat /tmp/fossid/fossid_raw.json
           echo "=============================="
