@@ -76,25 +76,14 @@ jobs:
             exit 1
           fi
 
-          echo "=== RAW FOSSID JSON OUTPUT ==="
-          cat /tmp/fossid/fossid_raw.json
-          echo "=============================="
-
       - name: Evaluate FossID Matches
         id: evaluate-fossid
         run: |
           python3 .github/scripts/format_fossid.py /tmp/fossid/fossid_raw.json --sarif fossid.sarif
 
-      - name: Print Generated SARIF
-        if: always()
-        run: |
-          echo "=== GENERATED FOSSID SARIF OUTPUT ==="
-          cat fossid.sarif
-          echo "====================================="
-
       - name: Upload FossID SARIF
         uses: github/codeql-action/upload-sarif@v4
-        if: always()
+        if: always() && hashFiles('fossid.sarif') != ''
         with:
           sarif_file: fossid.sarif
           category: fossid-license-compliance

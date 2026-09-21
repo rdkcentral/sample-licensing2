@@ -5,11 +5,18 @@ Schema-compliant SARIF 2.1.0
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import sys
 from typing import Any, Dict, List, Optional, Tuple
+
+
+MATCH_TYPE_LABELS = {
+    "file": "Full File Match",
+    "partial": "Partial Match",
+}
 
 
 def escape_github_data(text: str) -> str:
@@ -80,17 +87,15 @@ def extract_all_component_licenses(comp: Any) -> str:
     """Extract and merge licenses across component level and all license_files."""
     if not comp or not isinstance(comp, dict):
         return ""
+    sources: List[Any] = [comp]
+    sources.extend(
+        lf for lf in (comp.get("license_files") or []) if isinstance(lf, dict)
+    )
     collected: List[str] = []
-    direct_lic = extract_license_str(comp)
-    if direct_lic:
-        collected.extend([l.strip() for l in direct_lic.split(",") if l.strip()])
-
-    for lf in comp.get("license_files") or []:
-        if isinstance(lf, dict):
-            lf_lic = extract_license_str(lf)
-            if lf_lic:
-                collected.extend([l.strip() for l in lf_lic.split(",") if l.strip()])
-
+    for source in sources:
+        lic = extract_license_str(source)
+        if lic:
+            collected.extend(part.strip() for part in lic.split(",") if part.strip())
     return ", ".join(dict.fromkeys(collected))
 
 
@@ -148,6 +153,22 @@ def write_sarif(
         sarif_file.write("\n")
 
 
+def _line_ranges(blocks: Any) -> List[Tuple[int, int]]:
+    """Convert FossID highlight blocks (0-based offset+length) to 1-based (start, end) lines."""
+    ranges: List[Tuple[int, int]] = []
+    for block in blocks or []:
+        if not isinstance(block, dict):
+            continue
+        lines = block.get("lines") or {}
+        offset = lines.get("offset")
+        length = lines.get("length")
+        if offset is None or length is None:
+            continue
+        start = offset + 1
+        ranges.append((start, start + (length - 1 if length > 0 else 0)))
+    return ranges
+
+
 def parse_and_annotate(raw_text: str, sarif_path: Optional[str] = None) -> None:
     """Parse FossID JSON, print inline GitHub annotations, and generate SARIF report."""
     if not raw_text or not raw_text.strip():
@@ -189,8 +210,8 @@ def parse_and_annotate(raw_text: str, sarif_path: Optional[str] = None) -> None:
         fallback_purl = f"{artifact}@{ver}" if (artifact and ver) else artifact
         purl: str = comp.get("purl") or fallback_purl
         raw_match_type: str = item.get("match_type") or "partial"
-        match_type_display = (
-            "Full Match" if raw_match_type.lower() == "full" else "Partial Match"
+        match_type_display = MATCH_TYPE_LABELS.get(
+            raw_match_type.lower(), f"{raw_match_type} Match"
         )
 
         remote_lic = (
@@ -200,56 +221,42 @@ def parse_and_annotate(raw_text: str, sarif_path: Optional[str] = None) -> None:
         raw_url: str = remote_file_info.get("url") or comp.get("url") or ""
 
         # Validate local blocks
-        valid_local_blocks: List[Tuple[int, int]] = []
-        for b in local_blocks:
-            if isinstance(b, dict):
-                lines = b.get("lines") or {}
-                start = lines.get("offset")
-                length = lines.get("length")
-                if start is not None and length is not None:
-                    start_line = start + 1
-                    valid_local_blocks.append(
-                        (start_line, start_line + (length - 1 if length > 0 else 0))
-                    )
-
-        # Validate remote blocks
-        valid_remote_blocks: List[Tuple[int, int]] = []
-        for rb in remote_blocks:
-            if isinstance(rb, dict):
-                rl = rb.get("lines") or {}
-                r_start = rl.get("offset")
-                r_len = rl.get("length")
-                if r_start is not None and r_len is not None:
-                    start_line = r_start + 1
-                    valid_remote_blocks.append(
-                        (start_line, start_line + (r_len - 1 if r_len > 0 else 0))
-                    )
+        valid_local_blocks: List[Tuple[Optional[int], Optional[int]]] = list(
+            _line_ranges(local_blocks)
+        )
+        valid_remote_blocks = _line_ranges(remote_blocks)
 
         rem_range_strs = [f"{s}-{e}" for s, e in valid_remote_blocks]
         remote_lines_display = (
             f" (Lines {', '.join(rem_range_strs)})" if rem_range_strs else ""
         )
 
+        # A whole-file match (match_type "file") carries no local highlight; represent
+        # it as a single file-level finding rather than a bogus line-1 range.
         if not valid_local_blocks:
-            valid_local_blocks = [(1, 1)]
+            valid_local_blocks = [(None, None)]
+
+        primary_r_start, primary_r_end = (
+            valid_remote_blocks[0] if valid_remote_blocks else (None, None)
+        )
+        if raw_url and "github.com" in raw_url:
+            base_url = raw_url.split("#")[0]
+            remote_link = (
+                f"{base_url}#L{primary_r_start}-L{primary_r_end}"
+                if primary_r_start is not None
+                else base_url
+            )
+        else:
+            remote_link = raw_url
 
         for local_start, local_end in valid_local_blocks:
-            primary_r_start, primary_r_end = (
-                valid_remote_blocks[0] if valid_remote_blocks else (None, None)
-            )
-            if raw_url and "github.com" in raw_url:
-                base_url = raw_url.split("#")[0]
-                remote_link = (
-                    f"{base_url}#L{primary_r_start}-L{primary_r_end}"
-                    if primary_r_start is not None
-                    else base_url
-                )
-            else:
-                remote_link = raw_url
-
             local_link = get_local_link(local_file, local_start, local_end)
 
-            local_line_str = f" (Lines {local_start}-{local_end})"
+            local_line_str = (
+                f" (Lines {local_start}-{local_end})"
+                if local_start is not None
+                else " (entire file)"
+            )
             remote_lic_part = f" | License: {remote_lic}" if remote_lic else ""
 
             link_section = (
@@ -275,53 +282,79 @@ def parse_and_annotate(raw_text: str, sarif_path: Optional[str] = None) -> None:
                         "id": rule_id,
                         "name": "FossIDLicenseMatch",
                         "shortDescription": {
-                            "text": f"Third-party match: {artifact or 'External Component'}"
+                            "text": f"Third-party {match_type_display}: {artifact or 'External Component'}"
                         },
                         "fullDescription": {
                             "text": (
-                                f"FossID detected {match_type_display.lower()} code matching "
-                                f"'{artifact or 'third-party'}'."
+                                f"FossID detected a {match_type_display.lower()} against the "
+                                f"third-party component '{artifact or 'external component'}'."
                             )
                         },
                         "help": {
-                            "text": f"Component: {purl}\nLicense: {remote_lic}",
+                            "text": (
+                                f"Third-party {match_type_display} for component "
+                                f"'{artifact or 'external component'}'. Verify this "
+                                "component and its license terms comply with project "
+                                "open-source policy. Each alert lists the matched "
+                                "version, source lines, and upstream link."
+                            ),
                             "markdown": (
-                                f"### FossID Third-Party Component Match\n\n"
-                                f"- **Component:** `{purl}`\n"
-                                f"- **Matched License:** `{remote_lic or 'Unknown'}`\n"
-                                f"- **Match Type:** `{match_type_display}`\n"
-                                f"- **Remote Source:** `{remote_file_path}`\n\n"
-                                f"**Compliance Policy:**\n"
-                                f"Verify that this external component and its license "
-                                f"terms comply with project open-source guidelines. "
-                                f"Consult repository maintainers or the compliance team "
-                                f"if an approved exception applies."
+                                f"### FossID Third-Party {match_type_display}\n\n"
+                                f"- **Component:** `{artifact or 'external component'}`\n\n"
+                                "**Compliance Policy:**\n"
+                                "Verify that this external component and its license "
+                                "terms comply with project open-source guidelines. "
+                                "Consult repository maintainers or the compliance team "
+                                "if an approved exception applies.\n\n"
+                                "_Matched version, license, source lines, and upstream "
+                                "link are shown in each individual alert._"
                             ),
                         },
                         "defaultConfiguration": {"level": "error"},
-                        "properties": {"tags": ["license-compliance", "fossid"]},
+                        "properties": {
+                            "security-severity": "7.0",
+                            "tags": ["license-compliance", "fossid"],
+                        },
                     },
                 )
+
+                physical_location: Dict[str, Any] = {
+                    "artifactLocation": {
+                        "uri": local_file,
+                        "uriBaseId": "%SRCROOT%",
+                    }
+                }
+                if local_start is not None:
+                    physical_location["region"] = {
+                        "startLine": local_start,
+                        "endLine": local_end or local_start,
+                    }
+
+                # Stable identity per distinct FossID finding: keeps same-line matches
+                # across different component versions as separate, dismissable alerts.
+                fingerprint = hashlib.sha256(
+                    "|".join(
+                        [
+                            local_file,
+                            str(local_start),
+                            str(local_end),
+                            raw_match_type,
+                            purl,
+                            remote_file_path,
+                            ",".join(rem_range_strs),
+                        ]
+                    ).encode("utf-8")
+                ).hexdigest()
 
                 sarif_results.append(
                     {
                         "ruleId": rule_id,
                         "level": "error",
                         "message": {"text": card_msg},
-                        "locations": [
-                            {
-                                "physicalLocation": {
-                                    "artifactLocation": {
-                                        "uri": local_file,
-                                        "uriBaseId": "%SRCROOT%",
-                                    },
-                                    "region": {
-                                        "startLine": local_start or 1,
-                                        "endLine": local_end or local_start or 1,
-                                    },
-                                }
-                            }
-                        ],
+                        "partialFingerprints": {
+                            "primaryLocationLineHash": fingerprint
+                        },
+                        "locations": [{"physicalLocation": physical_location}],
                         "properties": {
                             "component": purl,
                             "remoteFile": remote_file_path,
@@ -342,7 +375,11 @@ def parse_and_annotate(raw_text: str, sarif_path: Optional[str] = None) -> None:
             escaped_title = escape_github_property(title)
             escaped_file = escape_github_property(local_file)
 
-            line_props = f",line={local_start},endLine={local_end}"
+            line_props = (
+                f",line={local_start},endLine={local_end}"
+                if local_start is not None
+                else ""
+            )
             print(
                 f"::error file={escaped_file}{line_props},"
                 f"title={escaped_title}::{escaped_msg}"
