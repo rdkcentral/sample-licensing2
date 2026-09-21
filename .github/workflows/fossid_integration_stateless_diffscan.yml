@@ -72,6 +72,10 @@ jobs:
                   --format json \
                   --ignore-projects /fossid_config/ignore_projects_fossid' > /tmp/fossid/fossid_raw.json || true
 
+          # Guard check: Ensure we didn't get an empty file or fatal network failure
+          if [ ! -s /tmp/fossid/fossid_raw.json ]; then
+            exit 1
+          fi
           echo "=== RAW FOSSID JSON OUTPUT ==="
           cat /tmp/fossid/fossid_raw.json
           echo "=============================="
