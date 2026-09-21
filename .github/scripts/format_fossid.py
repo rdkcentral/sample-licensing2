@@ -311,10 +311,7 @@ def parse_and_annotate(raw_text: str, sarif_path: Optional[str] = None) -> None:
                             ),
                         },
                         "defaultConfiguration": {"level": "error"},
-                        "properties": {
-                            "security-severity": "7.0",
-                            "tags": ["license-compliance", "fossid"],
-                        },
+                        "properties": {"tags": ["license-compliance", "fossid"]},
                     },
                 )
 
