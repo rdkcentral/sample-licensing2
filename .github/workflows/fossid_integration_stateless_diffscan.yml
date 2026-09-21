@@ -98,6 +98,3 @@ jobs:
         with:
           sarif_file: fossid.sarif
           category: fossid-license-compliance
-          checkout_path: ${{ github.workspace }}
-          ref: refs/heads/${{ github.head_ref }}
-          sha: ${{ github.event.pull_request.head.sha }}
