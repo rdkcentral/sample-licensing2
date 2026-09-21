@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 FossID Native GitHub Inline Annotator & SARIF Exporter
+Schema-compliant SARIF 2.1.0
 """
 from __future__ import annotations
 
