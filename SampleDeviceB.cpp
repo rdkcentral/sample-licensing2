@@ -2,15 +2,13 @@
 #include <memory>
 #include <string>
 
-namespace SampleTest {
+namespace SampleTestB {
 
-    // 1. Unrelated dummy function above
     void dummyHelperFunction() {
-        std::cout << "Unrelated helper function" << std::endl;
+        std::cout << "Unrelated helper function B" << std::endl;
     }
 
-    // 2. The snippet cut and pasted into a completely different function context
-    void relocatedAudioModule() {
+    void testAudioModuleB() {
         std::shared_ptr<alexaClientSDK::defaultClient::DefaultClient> client = alexaClientSDK::defaultClient::DefaultClient::create(
             deviceInfo,
             customerDataManager,

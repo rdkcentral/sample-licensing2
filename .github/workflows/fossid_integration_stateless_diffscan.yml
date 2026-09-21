@@ -12,12 +12,15 @@ on:
       FOSSID_HOST_TOKEN:
         required: true
 
+concurrency:
+  group: fossid-diffscan-${{ github.repository }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   run-diffscan:
     name: Fossid Annotate PR
     runs-on: ubuntu-latest
     permissions:
-      actions: read
       contents: read
       security-events: write
 
@@ -50,7 +53,6 @@ jobs:
 
           echo "Running diffscan with base-ref: $BASE_REF and compare-ref: $COMPARE_REF"
 
-          # Pass secrets safely as container environment variables
           docker run --rm \
             -v "${{ github.workspace }}:/repo" \
             -v "/tmp/fossid:/fossid_config" \
@@ -74,17 +76,13 @@ jobs:
           cat /tmp/fossid/fossid_raw.json
           echo "=============================="
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
       - name: Evaluate FossID Matches
         id: evaluate-fossid
         run: |
           python3 .github/scripts/format_fossid.py /tmp/fossid/fossid_raw.json --sarif fossid.sarif
 
       - name: Print Generated SARIF
+        if: always()
         run: |
           echo "=== GENERATED FOSSID SARIF OUTPUT ==="
           cat fossid.sarif
@@ -92,6 +90,7 @@ jobs:
 
       - name: Upload FossID SARIF
         uses: github/codeql-action/upload-sarif@v4
+        if: always()
         with:
           sarif_file: fossid.sarif
           category: fossid-license-compliance
