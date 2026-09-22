@@ -46,9 +46,10 @@ jobs:
         env:
           FOSSID_HOST_USERNAME: ${{ secrets.FOSSID_HOST_USERNAME }}
           FOSSID_HOST_TOKEN: ${{ secrets.FOSSID_HOST_TOKEN }}
+          BASE_REF_NAME: ${{ github.base_ref }}
         run: |
-          git fetch origin ${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }} || git fetch origin ${{ github.base_ref }}
-          BASE_REF="origin/${{ github.base_ref }}"
+          git fetch origin "$BASE_REF_NAME:refs/remotes/origin/$BASE_REF_NAME" || git fetch origin "$BASE_REF_NAME"
+          BASE_REF="origin/$BASE_REF_NAME"
           COMPARE_REF="HEAD"
 
           echo "Running diffscan with base-ref: $BASE_REF and compare-ref: $COMPARE_REF"
