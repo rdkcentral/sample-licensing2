@@ -234,7 +234,7 @@ def parse_and_annotate(raw_text: str, sarif_path: Optional[str] = None) -> None:
         # Only a whole-file match ("file") legitimately lacks a local highlight;
         # represent it as one file-level finding. Any other match type without a
         # usable local range is anomalous data, so skip it rather than mislabel a
-        # snippet match as covering the whole file.
+        # snippet match as covering the entire file.
         if not valid_local_blocks:
             if raw_match_type.lower() == "file":
                 valid_local_blocks = [(None, None)]
@@ -324,17 +324,18 @@ def parse_and_annotate(raw_text: str, sarif_path: Optional[str] = None) -> None:
                     },
                 )
 
+                # Anchor whole-file matches to line 1
+                # so the GitHub Advanced Security bot can attach an inline PR comment.
                 physical_location: Dict[str, Any] = {
                     "artifactLocation": {
                         "uri": local_file,
                         "uriBaseId": "%SRCROOT%",
-                    }
+                    },
+                    "region": {
+                        "startLine": local_start if local_start is not None else 1,
+                        "endLine": local_end if local_end is not None else 1,
+                    },
                 }
-                if local_start is not None:
-                    physical_location["region"] = {
-                        "startLine": local_start,
-                        "endLine": local_end or local_start,
-                    }
 
                 sarif_results.append(
                     {
