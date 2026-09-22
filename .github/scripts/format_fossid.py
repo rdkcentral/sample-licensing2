@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-FossID Native GitHub Inline Annotator & SARIF Exporter
-Schema-compliant SARIF 2.1.0
+FossID SARIF Exporter
+Schema-compliant SARIF 2.1.0 for GitHub Code Scanning
 """
 import json
 import os
@@ -13,22 +13,6 @@ MATCH_TYPE_LABELS = {
     "file": "Full File Match",
     "partial": "Partial Match",
 }
-
-
-def escape_github_data(text: str) -> str:
-    """Escape newlines and percent signs for GitHub Actions command payloads."""
-    return text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-
-
-def escape_github_property(text: str) -> str:
-    """Escape colons, commas, newlines, and percent signs for GitHub Actions parameters."""
-    return (
-        text.replace("%", "%25")
-        .replace("\r", "%0D")
-        .replace("\n", "%0A")
-        .replace(":", "%3A")
-        .replace(",", "%2C")
-    )
 
 
 def get_local_link(
@@ -47,36 +31,21 @@ def get_local_link(
     base = f"{server_url}/{repo}/blob/{ref}/{file_path}"
     if start_line is not None and end_line is not None:
         return f"{base}#L{start_line}-L{end_line}"
-    elif start_line is not None:
+    if start_line is not None:
         return f"{base}#L{start_line}"
     return base
 
 
 def extract_license_str(container: Any) -> str:
-    """Extract all unique license identifiers from a JSON container."""
-    if not container or not isinstance(container, dict):
+    """Extract unique license IDs from a FossID container's `licenses` list."""
+    if not isinstance(container, dict):
         return ""
-
-    lic_data = container.get("licenses")
-    if lic_data is None:
-        lic_data = container.get("license")
-
-    if isinstance(lic_data, str):
-        return lic_data.strip()
-    elif isinstance(lic_data, list):
-        extracted: List[str] = []
-        for lic in lic_data:
-            if isinstance(lic, str) and lic.strip():
-                extracted.append(lic.strip())
-            elif isinstance(lic, dict):
-                name = lic.get("id") or lic.get("name") or lic.get("spdx_id") or ""
-                if name.strip():
-                    extracted.append(name.strip())
-        return ", ".join(dict.fromkeys(extracted))
-    elif isinstance(lic_data, dict):
-        name = lic_data.get("id") or lic_data.get("name") or lic_data.get("spdx_id") or ""
-        return name.strip()
-    return ""
+    names = [
+        lic["id"].strip()
+        for lic in (container.get("licenses") or [])
+        if isinstance(lic, dict) and lic.get("id")
+    ]
+    return ", ".join(dict.fromkeys(names))
 
 
 def extract_all_component_licenses(comp: Any) -> str:
@@ -169,8 +138,8 @@ def _line_ranges(blocks: Any) -> List[Tuple[int, int]]:
     return ranges
 
 
-def parse_and_annotate(raw_text: str, sarif_path: Optional[str] = None) -> None:
-    """Parse FossID JSON, print inline GitHub annotations, and generate SARIF report."""
+def parse_and_generate_sarif(raw_text: str, sarif_path: Optional[str] = None) -> None:
+    """Parse FossID JSON and generate a schema-compliant SARIF 2.1.0 report."""
     if not raw_text or not raw_text.strip():
         if sarif_path:
             write_sarif(sarif_path, {}, [])
@@ -352,27 +321,6 @@ def parse_and_annotate(raw_text: str, sarif_path: Optional[str] = None) -> None:
                     }
                 )
 
-            title_comp = (
-                f"{artifact} ({remote_lic})"
-                if (artifact and remote_lic)
-                else (artifact or (f"({remote_lic})" if remote_lic else ""))
-            )
-            title = f"FossID {match_type_display}: {title_comp}" if title_comp else "FossID Match"
-
-            escaped_msg = escape_github_data(card_msg)
-            escaped_title = escape_github_property(title)
-            escaped_file = escape_github_property(local_file)
-
-            line_props = (
-                f",line={local_start},endLine={local_end}"
-                if local_start is not None
-                else ""
-            )
-            print(
-                f"::error file={escaped_file}{line_props},"
-                f"title={escaped_title}::{escaped_msg}"
-            )
-
     if sarif_path:
         write_sarif(sarif_path, sarif_rules, sarif_results)
 
@@ -381,7 +329,7 @@ def parse_and_annotate(raw_text: str, sarif_path: Optional[str] = None) -> None:
 
 
 def main() -> None:
-    """Parse command-line arguments and run the FossID annotator and SARIF exporter."""
+    """Parse command-line arguments and run the FossID SARIF exporter."""
     input_path: Optional[str] = None
     sarif_path: Optional[str] = None
     args = iter(sys.argv[1:])
@@ -407,7 +355,7 @@ def main() -> None:
     else:
         raw_input = sys.stdin.read()
 
-    parse_and_annotate(raw_input, sarif_path)
+    parse_and_generate_sarif(raw_input, sarif_path)
 
 
 if __name__ == "__main__":
