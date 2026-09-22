@@ -234,7 +234,7 @@ def parse_and_annotate(raw_text: str, sarif_path: Optional[str] = None) -> None:
         # Only a whole-file match ("file") legitimately lacks a local highlight;
         # represent it as one file-level finding. Any other match type without a
         # usable local range is anomalous data, so skip it rather than mislabel a
-        # snippet match as covering the entire file.
+        # snippet match as covering the whole file.
         if not valid_local_blocks:
             if raw_match_type.lower() == "file":
                 valid_local_blocks = [(None, None)]
