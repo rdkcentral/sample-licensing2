@@ -5,7 +5,6 @@ Schema-compliant SARIF 2.1.0
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
@@ -99,10 +98,11 @@ def extract_all_component_licenses(comp: Any) -> str:
     return ", ".join(dict.fromkeys(collected))
 
 
-def get_rule_id(match_type: str, author: str, artifact: str) -> str:
+def get_rule_id(match_type: str, author: str, artifact: str, version: str = "") -> str:
     """Create a clean, stable Rule ID compliant with GitHub SARIF requirements."""
     author = (author or "").strip().lower()
     artifact = (artifact or "").strip().lower()
+    version = (version or "").strip().lower()
 
     if author and artifact and artifact.startswith(author):
         clean_name = artifact
@@ -110,6 +110,9 @@ def get_rule_id(match_type: str, author: str, artifact: str) -> str:
         clean_name = f"{author}-{artifact}"
     else:
         clean_name = artifact or author or "unspecified"
+
+    if version:
+        clean_name = f"{clean_name}-{version}"
 
     clean_name = re.sub(r"[^a-z0-9._-]", "-", clean_name).strip("-")
     if match_type:
@@ -274,7 +277,7 @@ def parse_and_annotate(raw_text: str, sarif_path: Optional[str] = None) -> None:
             )
 
             if sarif_path and local_file:
-                rule_id = get_rule_id(raw_match_type, author, artifact)
+                rule_id = get_rule_id(raw_match_type, author, artifact, ver)
 
                 sarif_rules.setdefault(
                     rule_id,
@@ -327,30 +330,11 @@ def parse_and_annotate(raw_text: str, sarif_path: Optional[str] = None) -> None:
                         "endLine": local_end or local_start,
                     }
 
-                # Stable identity per distinct FossID finding: keeps same-line matches
-                # across different component versions as separate, dismissable alerts.
-                fingerprint = hashlib.sha256(
-                    "|".join(
-                        [
-                            local_file,
-                            str(local_start),
-                            str(local_end),
-                            raw_match_type,
-                            purl,
-                            remote_file_path,
-                            ",".join(rem_range_strs),
-                        ]
-                    ).encode("utf-8")
-                ).hexdigest()
-
                 sarif_results.append(
                     {
                         "ruleId": rule_id,
                         "level": "error",
                         "message": {"text": card_msg},
-                        "partialFingerprints": {
-                            "primaryLocationLineHash": fingerprint
-                        },
                         "locations": [{"physicalLocation": physical_location}],
                         "properties": {
                             "component": purl,

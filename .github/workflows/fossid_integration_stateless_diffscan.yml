@@ -40,7 +40,7 @@ jobs:
       - name: Fetch Ignore List
         run: |
           mkdir -p /tmp/fossid
-          curl -sSL https://raw.githubusercontent.com/rdkcentral/build_tools_workflows/refs/heads/develop/ignore_projects_fossid -o /tmp/fossid/ignore_projects_fossid
+          curl -fsSL https://raw.githubusercontent.com/rdkcentral/build_tools_workflows/refs/heads/develop/ignore_projects_fossid -o /tmp/fossid/ignore_projects_fossid
 
       - name: Run FossID Toolbox Diffscan (Docker)
         env:
@@ -53,6 +53,7 @@ jobs:
 
           echo "Running diffscan with base-ref: $BASE_REF and compare-ref: $COMPARE_REF"
 
+          set +e
           docker run --rm \
             -v "${{ github.workspace }}:/repo" \
             -v "/tmp/fossid:/fossid_config" \
@@ -62,7 +63,7 @@ jobs:
             -e BASE_REF="$BASE_REF" \
             -e COMPARE_REF="$COMPARE_REF" \
             --entrypoint /bin/sh \
-            quay.io/fossid/fossid-toolbox:1.5.29@sha256:f6f2537454784b40b98edaec8faddec54ea95d103293e9fd0d2623cfc7adff20 \
+            quay.io/fossid/fossid-toolbox:1.5.29 \
             -c 'git config --global --add safe.directory /repo && \
                 fossid diffscan \
                   --fossid-host "$FOSSID_HOST_USERNAME" \
@@ -70,9 +71,18 @@ jobs:
                   --base-ref "$BASE_REF" \
                   --compare-ref "$COMPARE_REF" \
                   --format json \
-                  --ignore-projects /fossid_config/ignore_projects_fossid' > /tmp/fossid/fossid_raw.json || true
+                  --ignore-projects /fossid_config/ignore_projects_fossid' > /tmp/fossid/fossid_raw.json
+          rc=$?
+          set -e
+
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::FossID diffscan failed (exit code $rc)"
+            cat /tmp/fossid/fossid_raw.json || true
+            exit "$rc"
+          fi
 
           if [ ! -s /tmp/fossid/fossid_raw.json ]; then
+            echo "::error::FossID diffscan produced no output"
             exit 1
           fi
 
