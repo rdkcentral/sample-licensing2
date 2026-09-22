@@ -3,14 +3,11 @@
 FossID Native GitHub Inline Annotator & SARIF Exporter
 Schema-compliant SARIF 2.1.0
 """
-from __future__ import annotations
-
 import json
 import os
 import re
 import sys
 from typing import Any, Dict, List, Optional, Tuple
-
 
 MATCH_TYPE_LABELS = {
     "file": "Full File Match",
@@ -24,7 +21,7 @@ def escape_github_data(text: str) -> str:
 
 
 def escape_github_property(text: str) -> str:
-    """Escape colons, commas, newlines, and percent signs for GitHub Actions parameters."""
+    """Escape control characters and separators for GitHub Actions parameters."""
     return (
         text.replace("%", "%25")
         .replace("\r", "%0D")
@@ -50,40 +47,36 @@ def get_local_link(
     base = f"{server_url}/{repo}/blob/{ref}/{file_path}"
     if start_line is not None and end_line is not None:
         return f"{base}#L{start_line}-L{end_line}"
-    elif start_line is not None:
+    if start_line is not None:
         return f"{base}#L{start_line}"
     return base
 
 
-def extract_license_str(container: Any) -> str:
-    """Extract all unique license identifiers from a JSON container."""
-    if not container or not isinstance(container, dict):
+def get_remote_link(raw_url: str, remote_blocks: List[Tuple[int, int]]) -> str:
+    """Construct an upstream URL linking directly to the first highlight range."""
+    if not raw_url:
         return ""
+    start, end = remote_blocks[0] if remote_blocks else (None, None)
+    if "github.com" in raw_url:
+        base_url = raw_url.split("#")[0]
+        return f"{base_url}#L{start}-L{end}" if start is not None else base_url
+    return raw_url
 
-    lic_data = container.get("licenses")
-    if lic_data is None:
-        lic_data = container.get("license")
 
-    if isinstance(lic_data, str):
-        return lic_data.strip()
-    elif isinstance(lic_data, list):
-        extracted: List[str] = []
-        for lic in lic_data:
-            if isinstance(lic, str) and lic.strip():
-                extracted.append(lic.strip())
-            elif isinstance(lic, dict):
-                name = lic.get("id") or lic.get("name") or lic.get("spdx_id") or ""
-                if name.strip():
-                    extracted.append(name.strip())
-        return ", ".join(dict.fromkeys(extracted))
-    elif isinstance(lic_data, dict):
-        name = lic_data.get("id") or lic_data.get("name") or lic_data.get("spdx_id") or ""
-        return name.strip()
-    return ""
+def extract_license_str(container: Any) -> str:
+    """Extract unique license IDs from a FossID container's `licenses` list."""
+    if not isinstance(container, dict):
+        return ""
+    names: List[str] = [
+        lic["id"].strip()
+        for lic in container.get("licenses") or []
+        if isinstance(lic, dict) and lic.get("id")
+    ]
+    return ", ".join(dict.fromkeys(names))
 
 
 def extract_all_component_licenses(comp: Any) -> str:
-    """Extract and merge licenses across component level and all license_files."""
+    """Extract and merge licenses across component root and all license_files."""
     if not comp or not isinstance(comp, dict):
         return ""
     sources: List[Any] = [comp]
@@ -98,7 +91,9 @@ def extract_all_component_licenses(comp: Any) -> str:
     return ", ".join(dict.fromkeys(collected))
 
 
-def get_rule_id(match_type: str, author: str, artifact: str, version: str = "") -> str:
+def get_rule_id(
+    match_type: str, author: str, artifact: str, version: str = ""
+) -> str:
     """Create a clean, stable Rule ID compliant with GitHub SARIF requirements."""
     author = (author or "").strip().lower()
     artifact = (artifact or "").strip().lower()
@@ -115,10 +110,11 @@ def get_rule_id(match_type: str, author: str, artifact: str, version: str = "") 
         clean_name = f"{clean_name}-{version}"
 
     clean_name = re.sub(r"[^a-z0-9._-]", "-", clean_name).strip("-")
-    if match_type:
-        match_clean = re.sub(r"[^a-z0-9._-]", "-", match_type.lower())
-    else:
-        match_clean = "partial"
+    match_clean = (
+        re.sub(r"[^a-z0-9._-]", "-", match_type.lower())
+        if match_type
+        else "partial"
+    )
     return f"fossid/{match_clean}/{clean_name}"
 
 
@@ -141,7 +137,9 @@ def write_sarif(
                 },
                 "originalUriBaseIds": {
                     "%SRCROOT%": {
-                        "description": {"text": "The root of the source repository."}
+                        "description": {
+                            "text": "The root of the source repository."
+                        }
                     }
                 },
                 "automationDetails": {
@@ -157,7 +155,7 @@ def write_sarif(
 
 
 def _line_ranges(blocks: Any) -> List[Tuple[int, int]]:
-    """Convert FossID highlight blocks (0-based offset+length) to 1-based (start, end) lines."""
+    """Convert FossID highlight blocks (0-based) to 1-based (start, end) lines."""
     ranges: List[Tuple[int, int]] = []
     for block in blocks or []:
         if not isinstance(block, dict):
@@ -172,218 +170,270 @@ def _line_ranges(blocks: Any) -> List[Tuple[int, int]]:
     return ranges
 
 
-def parse_and_annotate(raw_text: str, sarif_path: Optional[str] = None) -> None:
-    """Parse FossID JSON, print inline GitHub annotations, and generate SARIF report."""
+def build_card_message(
+    local_file: str,
+    local_range: Tuple[Optional[int], Optional[int]],
+    rem_lines_display: str,
+    meta: Dict[str, Any],
+    remote_link: str,
+) -> str:
+    """Construct formatted text card for inline annotations and SARIF."""
+    start, end = local_range
+    local_link = get_local_link(local_file, start, end)
+    local_line_str = (
+        f" (Lines {start}-{end})" if start is not None else " (entire file)"
+    )
+    lic_part = (
+        f" | License: {meta['remote_lic']}" if meta["remote_lic"] else ""
+    )
+
+    link_section = (
+        f"Local Link:  {local_link}\nRemote Link: {remote_link}"
+        if local_link
+        else f"Link:        {remote_link}"
+    )
+
+    return (
+        f"Local:       {local_file}{local_line_str}\n"
+        f"Remote:      {meta['remote_file']}{rem_lines_display}{lic_part}\n"
+        f"Component:   {meta['purl']}\n"
+        f"Match Type:  {meta['match_display']}\n"
+        f"{link_section}"
+    )
+
+
+def register_sarif_finding(
+    sarif_rules: Dict[str, Any],
+    sarif_results: List[Dict[str, Any]],
+    meta: Dict[str, Any],
+    card_msg: str,
+    local_range: Tuple[Optional[int], Optional[int]],
+) -> None:
+    """Register SARIF rule definition and individual finding result."""
+    rule_id = get_rule_id(
+        meta["raw_match_type"], meta["author"], meta["artifact"], meta["ver"]
+    )
+    match_display = meta["match_display"]
+    art = meta["artifact"] or "External Component"
+
+    sarif_rules.setdefault(
+        rule_id,
+        {
+            "id": rule_id,
+            "name": "FossIDLicenseMatch",
+            "shortDescription": {"text": f"Third-party {match_display}: {art}"},
+            "fullDescription": {
+                "text": (
+                    f"FossID detected a {match_display.lower()} against the "
+                    f"third-party component '{art}'."
+                )
+            },
+            "help": {
+                "text": (
+                    f"Third-party {match_display} for component '{art}'. "
+                    "Verify this component complies with open-source policy."
+                ),
+                "markdown": (
+                    f"### FossID Third-Party {match_display}\n\n"
+                    f"- **Component:** `{art}`\n\n"
+                    "**Compliance Policy:**\n"
+                    "Verify that this external component and its license terms "
+                    "comply with project open-source guidelines."
+                ),
+            },
+            "defaultConfiguration": {"level": "error"},
+            "properties": {"tags": ["license-compliance", "fossid"]},
+        },
+    )
+
+    phys_loc: Dict[str, Any] = {
+        "artifactLocation": {
+            "uri": meta["local_file"],
+            "uriBaseId": "%SRCROOT%",
+        }
+    }
+    start, end = local_range
+    if start is not None:
+        phys_loc["region"] = {"startLine": start, "endLine": end or start}
+
+    sarif_results.append(
+        {
+            "ruleId": rule_id,
+            "level": "error",
+            "message": {"text": card_msg},
+            "locations": [{"physicalLocation": phys_loc}],
+            "properties": {
+                "component": meta["purl"],
+                "remoteFile": meta["remote_file"],
+                "matchType": match_display,
+                "matchedLicense": meta["remote_lic"],
+            },
+        }
+    )
+
+
+def emit_github_annotation(
+    local_file: str,
+    local_range: Tuple[Optional[int], Optional[int]],
+    meta: Dict[str, Any],
+    card_msg: str,
+) -> None:
+    """Print the escaped GitHub Actions workflow inline annotation command."""
+    lic_tag = f"({meta['remote_lic']})" if meta["remote_lic"] else ""
+    parts = [p for p in [meta["artifact"], lic_tag] if p]
+    title_comp = " ".join(parts)
+    title = (
+        f"FossID {meta['match_display']}: {title_comp}"
+        if title_comp
+        else f"FossID {meta['match_display']}"
+    )
+
+    escaped_msg = escape_github_data(card_msg)
+    escaped_title = escape_github_property(title)
+
+    file_prop = (
+        f"file={escape_github_property(local_file)}," if local_file else ""
+    )
+    start, end = local_range
+    line_props = (
+        f"line={start},endLine={end}," if start is not None else ""
+    )
+
+    print(
+        f"::error {file_prop}{line_props}title={escaped_title}::{escaped_msg}"
+    )
+
+
+def extract_metadata(
+    item: Dict[str, Any], local_file: str, remote_info: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Extract and normalize finding metadata into a dictionary."""
+    comp = item.get("component") or {}
+    raw_match_type = item.get("match_type") or "partial"
+    art = comp.get("artifact") or ""
+    ver = comp.get("version") or ""
+    fallback_purl = f"{art}@{ver}" if (art and ver) else art
+
+    # Dual-layer resolution: check matched file first, fall back to upstream project license files
+    remote_lic = (
+        extract_license_str(remote_info)
+        or extract_all_component_licenses(comp)
+    )
+
+    return {
+        "local_file": local_file,
+        "remote_file": remote_info.get("path") or "",
+        "author": comp.get("author") or "",
+        "artifact": art,
+        "ver": ver,
+        "purl": comp.get("purl") or fallback_purl,
+        "raw_match_type": raw_match_type,
+        "match_display": MATCH_TYPE_LABELS.get(
+            raw_match_type.lower(), f"{raw_match_type} Match"
+        ),
+        "remote_lic": remote_lic,
+        "raw_url": remote_info.get("url") or comp.get("url") or "",
+    }
+
+
+def resolve_local_blocks(
+    valid_local: List[Tuple[int, int]],
+    match_type: str,
+    local_file: str,
+) -> Optional[List[Tuple[Optional[int], Optional[int]]]]:
+    """Return normalized line ranges or None if finding is anomalous and skippable."""
+    if valid_local:
+        return list(valid_local)
+    if match_type.lower() == "file":
+        return [(None, None)]
+
+    sys.stderr.write(
+        f"Warning: skipping '{match_type}' match for "
+        f"{local_file or 'unknown file'} with no valid local range\n"
+    )
+    return None
+
+
+def process_single_issue(
+    item: Dict[str, Any],
+    sarif_rules: Dict[str, Any],
+    sarif_results: List[Dict[str, Any]],
+    emit_sarif: bool,
+) -> None:
+    """Parse one FossID issue, print annotations, and append SARIF objects."""
+    local_info = item.get("local_file") or {}
+    local_file = local_info.get("path") or ""
+    remote_info = item.get("remote_file") or {}
+
+    valid_local = _line_ranges(
+        (local_info.get("highlight") or {}).get("blocks")
+    )
+    valid_remote = _line_ranges(
+        (remote_info.get("highlight") or {}).get("blocks")
+    )
+
+    meta = extract_metadata(item, local_file, remote_info)
+    target_local_blocks = resolve_local_blocks(
+        valid_local, meta["raw_match_type"], local_file
+    )
+    if target_local_blocks is None:
+        return
+
+    rem_range_strs = [f"{s}-{e}" for s, e in valid_remote]
+    rem_lines_display = (
+        f" (Lines {', '.join(rem_range_strs)})" if rem_range_strs else ""
+    )
+    remote_link = get_remote_link(meta["raw_url"], valid_remote)
+
+    for local_range in target_local_blocks:
+        card_msg = build_card_message(
+            local_file, local_range, rem_lines_display, meta, remote_link
+        )
+
+        if emit_sarif and local_file:
+            register_sarif_finding(
+                sarif_rules, sarif_results, meta, card_msg, local_range
+            )
+
+        emit_github_annotation(local_file, local_range, meta, card_msg)
+
+
+def parse_and_annotate(
+    raw_text: str, sarif_path: Optional[str] = None
+) -> None:
+    """Parse FossID JSON, print inline GitHub annotations, and write SARIF."""
     if not raw_text or not raw_text.strip():
         if sarif_path:
             write_sarif(sarif_path, {}, [])
-        sys.exit(0)
+        return
 
     try:
         data = json.loads(raw_text)
-    except json.JSONDecodeError as e:
-        sys.stderr.write(f"Error: Invalid JSON input: {e}\n")
+    except json.JSONDecodeError as err:
+        sys.stderr.write(f"Error: Invalid JSON input: {err}\n")
         sys.exit(1)
 
-    issues = data.get("license_issues", []) if isinstance(data, dict) else data
+    issues = data.get("license_issues", []) if isinstance(data, dict) else []
     if not issues or not isinstance(issues, list):
         if sarif_path:
             write_sarif(sarif_path, {}, [])
-        sys.exit(0)
+        return
 
     sarif_rules: Dict[str, Any] = {}
     sarif_results: List[Dict[str, Any]] = []
 
     for item in issues:
-        if not isinstance(item, dict):
-            continue
-
-        local_file_info = item.get("local_file") or {}
-        local_file: str = local_file_info.get("path") or ""
-        local_blocks = (local_file_info.get("highlight") or {}).get("blocks") or []
-
-        remote_file_info = item.get("remote_file") or {}
-        remote_file_path: str = remote_file_info.get("path") or ""
-        remote_blocks = (remote_file_info.get("highlight") or {}).get("blocks") or []
-
-        comp = item.get("component") or {}
-        author: str = comp.get("author") or ""
-        artifact: str = comp.get("artifact") or ""
-        ver: str = comp.get("version") or ""
-        fallback_purl = f"{artifact}@{ver}" if (artifact and ver) else artifact
-        purl: str = comp.get("purl") or fallback_purl
-        raw_match_type: str = item.get("match_type") or "partial"
-        match_type_display = MATCH_TYPE_LABELS.get(
-            raw_match_type.lower(), f"{raw_match_type} Match"
-        )
-
-        remote_lic = (
-            extract_license_str(remote_file_info)
-            or extract_all_component_licenses(comp)
-        )
-        raw_url: str = remote_file_info.get("url") or comp.get("url") or ""
-
-        # Validate local blocks
-        valid_local_blocks: List[Tuple[Optional[int], Optional[int]]] = list(
-            _line_ranges(local_blocks)
-        )
-        valid_remote_blocks = _line_ranges(remote_blocks)
-
-        rem_range_strs = [f"{s}-{e}" for s, e in valid_remote_blocks]
-        remote_lines_display = (
-            f" (Lines {', '.join(rem_range_strs)})" if rem_range_strs else ""
-        )
-
-        # Only a whole-file match ("file") legitimately lacks a local highlight;
-        # represent it as one file-level finding. Any other match type without a
-        # usable local range is anomalous data, so skip it rather than mislabel a
-        # snippet match as covering the entire file.
-        if not valid_local_blocks:
-            if raw_match_type.lower() == "file":
-                valid_local_blocks = [(None, None)]
-            else:
-                sys.stderr.write(
-                    f"Warning: skipping '{raw_match_type}' match for "
-                    f"{local_file or 'unknown file'} with no valid local range\n"
-                )
-                continue
-
-        primary_r_start, primary_r_end = (
-            valid_remote_blocks[0] if valid_remote_blocks else (None, None)
-        )
-        if raw_url and "github.com" in raw_url:
-            base_url = raw_url.split("#")[0]
-            remote_link = (
-                f"{base_url}#L{primary_r_start}-L{primary_r_end}"
-                if primary_r_start is not None
-                else base_url
-            )
-        else:
-            remote_link = raw_url
-
-        for local_start, local_end in valid_local_blocks:
-            local_link = get_local_link(local_file, local_start, local_end)
-
-            local_line_str = (
-                f" (Lines {local_start}-{local_end})"
-                if local_start is not None
-                else " (entire file)"
-            )
-            remote_lic_part = f" | License: {remote_lic}" if remote_lic else ""
-
-            link_section = (
-                f"Local Link:  {local_link}\nRemote Link: {remote_link}"
-                if local_link
-                else f"Link:        {remote_link}"
-            )
-
-            card_msg = (
-                f"Local:       {local_file}{local_line_str}\n"
-                f"Remote:      {remote_file_path}{remote_lines_display}{remote_lic_part}\n"
-                f"Component:   {purl}\n"
-                f"Match Type:  {match_type_display}\n"
-                f"{link_section}"
-            )
-
-            if sarif_path and local_file:
-                rule_id = get_rule_id(raw_match_type, author, artifact, ver)
-
-                sarif_rules.setdefault(
-                    rule_id,
-                    {
-                        "id": rule_id,
-                        "name": "FossIDLicenseMatch",
-                        "shortDescription": {
-                            "text": f"Third-party {match_type_display}: {artifact or 'External Component'}"
-                        },
-                        "fullDescription": {
-                            "text": (
-                                f"FossID detected a {match_type_display.lower()} against the "
-                                f"third-party component '{artifact or 'external component'}'."
-                            )
-                        },
-                        "help": {
-                            "text": (
-                                f"Third-party {match_type_display} for component "
-                                f"'{artifact or 'external component'}'. Verify this "
-                                "component and its license terms comply with project "
-                                "open-source policy. Each alert lists the matched "
-                                "version, source lines, and upstream link."
-                            ),
-                            "markdown": (
-                                f"### FossID Third-Party {match_type_display}\n\n"
-                                f"- **Component:** `{artifact or 'external component'}`\n\n"
-                                "**Compliance Policy:**\n"
-                                "Verify that this external component and its license "
-                                "terms comply with project open-source guidelines. "
-                                "Consult repository maintainers or the compliance team "
-                                "if an approved exception applies.\n\n"
-                                "_Matched version, license, source lines, and upstream "
-                                "link are shown in each individual alert._"
-                            ),
-                        },
-                        "defaultConfiguration": {"level": "error"},
-                        "properties": {"tags": ["license-compliance", "fossid"]},
-                    },
-                )
-
-                physical_location: Dict[str, Any] = {
-                    "artifactLocation": {
-                        "uri": local_file,
-                        "uriBaseId": "%SRCROOT%",
-                    }
-                }
-                if local_start is not None:
-                    physical_location["region"] = {
-                        "startLine": local_start,
-                        "endLine": local_end or local_start,
-                    }
-
-                sarif_results.append(
-                    {
-                        "ruleId": rule_id,
-                        "level": "error",
-                        "message": {"text": card_msg},
-                        "locations": [{"physicalLocation": physical_location}],
-                        "properties": {
-                            "component": purl,
-                            "remoteFile": remote_file_path,
-                            "matchType": match_type_display,
-                            "matchedLicense": remote_lic,
-                        },
-                    }
-                )
-
-            title_comp = (
-                f"{artifact} ({remote_lic})"
-                if (artifact and remote_lic)
-                else (artifact or (f"({remote_lic})" if remote_lic else ""))
-            )
-            title = f"FossID {match_type_display}: {title_comp}" if title_comp else "FossID Match"
-
-            escaped_msg = escape_github_data(card_msg)
-            escaped_title = escape_github_property(title)
-            escaped_file = escape_github_property(local_file)
-
-            line_props = (
-                f",line={local_start},endLine={local_end}"
-                if local_start is not None
-                else ""
-            )
-            print(
-                f"::error file={escaped_file}{line_props},"
-                f"title={escaped_title}::{escaped_msg}"
+        if isinstance(item, dict):
+            process_single_issue(
+                item, sarif_rules, sarif_results, bool(sarif_path)
             )
 
     if sarif_path:
         write_sarif(sarif_path, sarif_rules, sarif_results)
 
-    # Exits 0 so GitHub's native Code Scanning engine controls PR pass/fail gate
-    sys.exit(0)
-
 
 def main() -> None:
-    """Parse command-line arguments and run the FossID annotator and SARIF exporter."""
+    """Parse CLI arguments and run the FossID annotator and SARIF exporter."""
     input_path: Optional[str] = None
     sarif_path: Optional[str] = None
     args = iter(sys.argv[1:])
@@ -404,8 +454,8 @@ def main() -> None:
         if not os.path.exists(input_path):
             sys.stderr.write(f"Error: File not found: {input_path}\n")
             sys.exit(1)
-        with open(input_path, "r", encoding="utf-8") as f:
-            raw_input = f.read()
+        with open(input_path, "r", encoding="utf-8") as file_handle:
+            raw_input = file_handle.read()
     else:
         raw_input = sys.stdin.read()
 
