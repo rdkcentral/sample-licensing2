@@ -67,4 +67,48 @@ namespace SampleTestC {
         return statusReady;
     }
 
+    bool initializeSampleApplication(
+    std::shared_ptr<alexaClientSDK::sampleApp::ConsoleReader> reader,
+    const std::vector<std::string>& configFiles,
+    const std::string& pathToInputFolder,
+    const std::string& logLevel) {
+
+    alexaClientSDK::avsCommon::utils::logger::Level logLevelValue =
+        alexaClientSDK::avsCommon::utils::logger::Level::UNKNOWN;
+    if (!logLevel.empty()) {
+        logLevelValue = alexaClientSDK::avsCommon::utils::logger::convertStringToLogLevel(logLevel);
+        if (alexaClientSDK::avsCommon::utils::logger::Level::UNKNOWN == logLevelValue) {
+            alexaClientSDK::sampleApp::ConsolePrinter::simplePrint("Unknown log level: " + logLevel);
+            return false;
+        }
+    }
+
+    if (configFiles.empty()) {
+        alexaClientSDK::sampleApp::ConsolePrinter::simplePrint("Config file(s) not specified!");
+        return false;
+    }
+
+    std::vector<std::shared_ptr<std::istream>> configStreamList;
+    for (auto configFile : configFiles) {
+        if (configFile.empty()) {
+            alexaClientSDK::sampleApp::ConsolePrinter::simplePrint("Config file not specified!");
+            return false;
+        }
+        auto configStream = std::shared_ptr<std::ifstream>(new std::ifstream(configFile));
+        if (!configStream->good()) {
+            alexaClientSDK::sampleApp::ConsolePrinter::simplePrint("Failed to read config file " + configFile);
+            return false;
+        }
+        configStreamList.push_back(configStream);
+    }
+
+    auto configurationNode = alexaClientSDK::avsCommon::utils::configuration::ConfigurationNode::create(configStreamList);
+    if (!configurationNode) {
+        alexaClientSDK::sampleApp::ConsolePrinter::simplePrint("Failed to create a valid configuration node!");
+        return false;
+    }
+
+    return true;
+}
+
 }
