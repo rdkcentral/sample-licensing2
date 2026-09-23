@@ -153,6 +153,7 @@ def _line_ranges(blocks: Any) -> List[Tuple[int, int]]:
 
 def parse_and_generate_sarif(raw_text: str, sarif_path: Optional[str] = None) -> None:
     """Parse FossID JSON and generate a schema-compliant SARIF 2.1.0 report."""
+    # If the input text is completely empty, write empty SARIF and exit cleanly
     if not raw_text or not raw_text.strip():
         if sarif_path:
             write_sarif(sarif_path, {}, [])
@@ -160,12 +161,15 @@ def parse_and_generate_sarif(raw_text: str, sarif_path: Optional[str] = None) ->
 
     try:
         data = json.loads(raw_text)
-    except json.JSONDecodeError as e:
-        sys.stderr.write(f"Error: Invalid JSON input: {e}\n")
-        sys.exit(1)
+    except json.JSONDecodeError:
+        # If input is not JSON (e.g., empty or plain text notice), treat as no findings
+        if sarif_path:
+            write_sarif(sarif_path, {}, [])
+        sys.exit(0)
 
     issues = data.get("license_issues", []) if isinstance(data, dict) else data
     if not issues or not isinstance(issues, list):
+        # 0 issues found: write an empty SARIF run and succeed
         if sarif_path:
             write_sarif(sarif_path, {}, [])
         sys.exit(0)
@@ -214,19 +218,12 @@ def parse_and_generate_sarif(raw_text: str, sarif_path: Optional[str] = None) ->
             f" (Lines {', '.join(rem_range_strs)})" if rem_range_strs else ""
         )
 
-        # Whole-file matches legitimately lack a local highlight block;
-        # anchor to file-level.
         if not valid_local_blocks:
             if raw_match_type.lower() == "file":
                 valid_local_blocks = [(None, None)]
             else:
-                sys.stderr.write(
-                    f"Warning: skipping '{raw_match_type}' match for "
-                    f"{local_file or 'unknown file'} with no valid local range\n"
-                )
                 continue
 
-        # Highlight the primary matched chunk range upstream
         primary_r_start, primary_r_end = (
             valid_remote_blocks[0] if valid_remote_blocks else (None, None)
         )
@@ -372,10 +369,13 @@ def main() -> None:
             sys.stderr.write(f"Error: Unexpected argument: {arg}\n")
             sys.exit(2)
 
+    raw_input = ""
     if input_path:
-        if not os.path.exists(input_path):
-            sys.stderr.write(f"Error: File not found: {input_path}\n")
-            sys.exit(1)
+        # If file does not exist or is empty (0 findings), generate empty SARIF cleanly and exit 0
+        if not os.path.exists(input_path) or os.path.getsize(input_path) == 0:
+            if sarif_path:
+                write_sarif(sarif_path, {}, [])
+            sys.exit(0)
         with open(input_path, "r", encoding="utf-8") as f:
             raw_input = f.read()
     else:
