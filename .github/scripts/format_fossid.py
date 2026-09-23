@@ -6,14 +6,46 @@ Schema-compliant SARIF 2.1.0 for GitHub Code Scanning
 import json
 import os
 import re
+import subprocess
 import sys
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import urlsplit
 
 MATCH_TYPE_LABELS = {
     "file": "Full File Match",
     "partial": "Partial Match",
 }
+
+
+def get_pr_changed_lines(base_ref: str, file_path: str) -> Optional[Set[int]]:
+    """
+    Returns the set of 1-based line numbers that were added or modified in the PR.
+    If base_ref is missing or git diff fails (e.g. untracked/new file), returns None,
+    meaning 'include all lines without filtering'.
+    """
+    if not base_ref:
+        return None
+
+    try:
+        # Run git diff against the base branch
+        cmd = ["git", "diff", "-U0", f"{base_ref}...HEAD", "--", file_path]
+        res = subprocess.run(cmd, capture_output=True, text=True, check=True)
+
+        changed_lines: Set[int] = set()
+        for line in res.stdout.splitlines():
+            # Parse unified diff hunk header: @@ -old,count +new,count @@
+            if line.startswith("@@"):
+                match = re.search(r"\+(\d+)(?:,(\d+))?", line)
+                if match:
+                    start = int(match.group(1))
+                    count = int(match.group(2)) if match.group(2) is not None else 1
+                    # A hunk with count 0 indicates deleted lines; additions have count >= 1
+                    if count > 0:
+                        changed_lines.update(range(start, start + count))
+        return changed_lines
+    except Exception:
+        # Fallback: if git fails, do not block scanning
+        return None
 
 
 def is_github_url(url: str) -> bool:
@@ -94,17 +126,11 @@ def get_rule_id(match_type: str, author: str, artifact: str, version: str = "") 
         clean_name = f"{clean_name}-{version}"
 
     clean_name = re.sub(r"[^a-z0-9._-]", "-", clean_name).strip("-")
-    if match_type:
-        match_clean = re.sub(r"[^a-z0-9._-]", "-", match_type.lower())
-    else:
-        match_clean = "partial"
+    match_clean = re.sub(r"[^a-z0-9._-]", "-", match_type.lower()) if match_type else "partial"
     return f"fossid/{match_clean}/{clean_name}"
 
 
-def write_sarif(
-    path: str, rules: Dict[str, Any], results: List[Dict[str, Any]]
-) -> None:
-    """Output a strictly compliant SARIF 2.1.0 JSON file."""
+def write_sarif(path: str, rules: Dict[str, Any], results: List[Dict[str, Any]]) -> None:
     sarif = {
         "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
         "version": "2.1.0",
@@ -177,6 +203,9 @@ def parse_and_generate_sarif(raw_text: str, sarif_path: Optional[str] = None) ->
     sarif_rules: Dict[str, Any] = {}
     sarif_results: List[Dict[str, Any]] = []
 
+    # Get the base ref from environment (passed from GitHub Actions workflow)
+    base_ref = os.environ.get("BASE_REF", "")
+
     for item in issues:
         if not isinstance(item, dict):
             continue
@@ -244,8 +273,22 @@ def parse_and_generate_sarif(raw_text: str, sarif_path: Optional[str] = None) ->
         else:
             multi_chunk_note = ""
 
-        # Loop over local blocks (one alert per block)
+        # Fetch lines that were actually added/edited in this PR for this file
+        changed_lines_in_pr = get_pr_changed_lines(base_ref, local_file)
+
         for local_start, local_end in valid_local_blocks:
+            # =========================================================================
+            # SUPPRESS PRE-EXISTING BLOCKS
+            # If changed_lines_in_pr is available, ignore any block that doesn't overlap
+            # with lines introduced or touched in this PR.
+            # =========================================================================
+            if changed_lines_in_pr is not None and local_start is not None and local_end is not None:
+                block_lines = range(local_start, local_end + 1)
+                # Check if this block has any intersection with lines touched by the PR
+                if not any(line in changed_lines_in_pr for line in block_lines):
+                    # Pure pre-existing snippet: SKIP to eliminate SARIF noise!
+                    continue
+
             local_link = get_local_link(local_file, local_start, local_end)
 
             local_line_str = (
