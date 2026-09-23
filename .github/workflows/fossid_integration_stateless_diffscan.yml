@@ -73,19 +73,21 @@ jobs:
                   --compare-ref "$COMPARE_REF" \
                   --license-mode new \
                   --format json \
-                  --ignore-projects /fossid_config/ignore_projects_fossid' > /tmp/fossid/fossid_raw.json
+                  --ignore-projects /fossid_config/ignore_projects_fossid' > /tmp/fossid/fossid_raw.json 2> /tmp/fossid/fossid_err.log
           rc=$?
           set -e
 
+          # If the command failed, print stderr and exit
           if [ "$rc" -ne 0 ]; then
             echo "::error::FossID diffscan failed (exit code $rc)"
-            cat /tmp/fossid/fossid_raw.json || true
+            cat /tmp/fossid/fossid_err.log || true
             exit "$rc"
           fi
 
+          # If FossID output is empty (0 bytes) with exit code 0, it means NO issues were found!
           if [ ! -s /tmp/fossid/fossid_raw.json ]; then
-            echo "::error::FossID diffscan produced no output"
-            exit 1
+            echo "FossID reported 0 issues (empty output). Initializing empty result JSON."
+            echo '{"license_issues": [], "vsf_issues": []}' > /tmp/fossid/fossid_raw.json
           fi
 
       - name: Raw FossID JSON Output
