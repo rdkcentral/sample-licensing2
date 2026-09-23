@@ -1,8 +1,8 @@
 #include <iostream>
 #include <memory>
 #include <string>
-#include <cstdlib>
-#include <cstring>
+#include <vector>
+#include <fstream>
 
 namespace SampleTestB {
 
@@ -63,22 +63,41 @@ namespace SampleTestB {
             tapToTalkAudioProvider);
     }
 
-    void *allocator_shim_malloc(size_t size) {
-        void *ptr;
-        if (size == 0)
-            size = 1;
-        ptr = malloc(size);
-        if (!ptr) {
-            std::cerr << "Out of memory in allocator shim!" << std::endl;
-            return nullptr;
-        }
-        return ptr;
-    }
+    bool initializeConsoleReader(
+        std::shared_ptr<alexaClientSDK::sampleApp::ConsoleReader> reader,
+        const std::vector<std::string>& configFiles,
+        const std::string& pathToInputFolder,
+        const std::string& logLevel) {
 
-    void allocator_shim_free(void *ptr) {
-        if (ptr) {
-            free(ptr);
+        alexaClientSDK::avsCommon::utils::logger::Level logLevelValue =
+            alexaClientSDK::avsCommon::utils::logger::Level::UNKNOWN;
+        if (!logLevel.empty()) {
+            logLevelValue = alexaClientSDK::avsCommon::utils::logger::convertStringToLogLevel(logLevel);
+            if (alexaClientSDK::avsCommon::utils::logger::Level::UNKNOWN == logLevelValue) {
+                alexaClientSDK::sampleApp::ConsolePrinter::simplePrint("Unknown log level: " + logLevel);
+                return false;
+            }
         }
+
+        if (configFiles.empty()) {
+            alexaClientSDK::sampleApp::ConsolePrinter::simplePrint("Config file(s) not specified!");
+            return false;
+        }
+
+        std::vector<std::shared_ptr<std::istream>> configStreamList;
+        for (auto configFile : configFiles) {
+            if (configFile.empty()) {
+                alexaClientSDK::sampleApp::ConsolePrinter::simplePrint("Config file not specified!");
+                return false;
+            }
+            auto configStream = std::shared_ptr<std::ifstream>(new std::ifstream(configFile));
+            if (!configStream->good()) {
+                alexaClientSDK::sampleApp::ConsolePrinter::simplePrint("Failed to read config file " + configFile);
+                return false;
+            }
+            configStreamList.push_back(configStream);
+        }
+        return true;
     }
 
 }
