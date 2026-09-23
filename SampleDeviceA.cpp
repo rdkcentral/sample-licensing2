@@ -62,76 +62,53 @@ namespace SampleTestC {
             nullptr,
             tapToTalkAudioProvider);
     }
-}
 
-// --- ADDED IN PR: SQLite Memory Allocation Engine (Public Domain / SQLite) ---
-extern "C" {
-
-struct Mem0Global {
-    int NumberType;
-    int bMemstat;
-    int bCoreMutex;
-    void *pScratch;
-    int szScratch;
-    int nScratch;
-    void *pPage;
-    int szPage;
-    int nPage;
-    int mxParserStack;
-} sqlite3Mem0;
-
-void *sqlite3MemMalloc(int nByte) {
-    struct {
-        int totalSize;
-        int dummy;
-    } *pPrior;
-    int nByte2;
-    void *p = 0;
-
-    if (nByte > 0) {
-        nByte2 = (nByte + 7) & ~7;
-        pPrior = (decltype(pPrior))malloc(nByte2 + 8);
-        if (pPrior) {
-            pPrior->totalSize = nByte2;
-            p = (void *)&pPrior[1];
+    bool testTransportAndGateway() {
+        // Context
+        auto contextManager = manufactory->get<std::shared_ptr<avsCommon::sdkInterfaces::ContextManagerInterface>>();
+        if (!contextManager) {
+            return false;
         }
-    }
-    return p;
-}
 
-void sqlite3MemFree(void *pPrior) {
-    struct {
-        int totalSize;
-        int dummy;
-    } *pReal;
-    if (pPrior) {
-        pReal = (decltype(pReal))pPrior;
-        pReal--;
-        free(pReal);
-    }
-}
+        auto avsGatewayManagerStorage = avsGatewayManager::storage::AVSGatewayManagerStorage::create(miscStorage);
+        if (!avsGatewayManagerStorage) {
+            return false;
+        }
+        auto avsGatewayManager = avsGatewayManager::AVSGatewayManager::create(
+            std::move(avsGatewayManagerStorage), customerDataManager, config, authDelegate);
+        if (!avsGatewayManager) {
+            return false;
+        }
 
-void *sqlite3MemRealloc(void *pPrior, int nByte) {
-    struct {
-        int totalSize;
-        int dummy;
-    } *pOld;
-    void *pNew = 0;
-    if (pPrior == 0) {
-        return sqlite3MemMalloc(nByte);
+        auto synchronizeStateSenderFactory = synchronizeStateSender::SynchronizeStateSenderFactory::create(contextManager);
+        if (!synchronizeStateSenderFactory) {
+            return false;
+        }
+
+        std::vector<std::shared_ptr<avsCommon::sdkInterfaces::PostConnectOperationProviderInterface>> providers;
+        providers.push_back(synchronizeStateSenderFactory);
+        providers.push_back(avsGatewayManager);
+        providers.push_back(m_capabilitiesDelegate);
+
+        /*
+         * Create a factory for creating objects that handle tasks that need to be performed right after establishing
+         * a connection to AVS.
+         */
+        auto postConnectSequencerFactory = acl::PostConnectSequencerFactory::create(providers);
+
+        /*
+         * Create a factory to create objects that establish a connection with AVS.
+         */
+        auto transportFactory = std::make_shared<acl::HTTP2TransportFactory>(
+            std::make_shared<avsCommon::utils::libcurlUtils::LibcurlHTTP2ConnectionFactory>(),
+            postConnectSequencerFactory,
+            nullptr,
+            nullptr);
+        if (!transportFactory) {
+            return false;
+        }
+
+        return true;
     }
-    if (nByte <= 0) {
-        sqlite3MemFree(pPrior);
-        return 0;
-    }
-    pOld = (decltype(pOld))pPrior;
-    pOld--;
-    pNew = sqlite3MemMalloc(nByte);
-    if (pNew) {
-        memcpy(pNew, pPrior, pOld->totalSize < nByte ? pOld->totalSize : nByte);
-        sqlite3MemFree(pPrior);
-    }
-    return pNew;
-}
 
 }
