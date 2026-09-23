@@ -53,7 +53,7 @@ jobs:
           COMPARE_REF="HEAD"
 
           echo "Running diffscan with base-ref: $BASE_REF and compare-ref: $COMPARE_REF"
-          
+
           echo "=== FILES CHANGED IN GIT DIFF ==="
           git diff --name-only "$BASE_REF...$COMPARE_REF"
 
@@ -78,6 +78,9 @@ jobs:
                   --ignore-projects /fossid_config/ignore_projects_fossid' > /tmp/fossid/fossid_raw.json 2> /tmp/fossid/fossid_err.log
           rc=$?
           set -e
+
+          echo "=== FOSSID STDERR LOGS ==="
+          cat /tmp/fossid/fossid_err.log || true
 
           # If the command failed, print stderr and exit
           if [ "$rc" -ne 0 ]; then
