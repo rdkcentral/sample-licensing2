@@ -63,8 +63,6 @@ namespace SampleTestB {
             tapToTalkAudioProvider);
     }
 
-    // --- SNIPPET 2 (TEST CANDIDATE: Chromium allocator shim) ---
-    // This matches the exact Chromium component from your earlier documentation example!
     void *allocator_shim_malloc(size_t size) {
         void *ptr;
         if (size == 0)
