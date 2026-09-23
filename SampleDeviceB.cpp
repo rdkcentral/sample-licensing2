@@ -62,47 +62,35 @@ namespace SampleTestB {
             tapToTalkAudioProvider);
     }
 
-    bool testAVSInit() {
-        auto builder = avsCommon::avs::initialization::InitializationParametersBuilder::create();
-        if (!builder) {
-            return false;
+    void simplePrint(const std::string& stringToPrint) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        const char* stringPtr = stringToPrint.c_str();
+        const char* endPtr = stringPtr + stringToPrint.length();
+
+        while (stringPtr < endPtr) {
+            const char* nextPtr = stringPtr;
+            while (nextPtr < endPtr && *nextPtr != '\n') {
+                nextPtr++;
+            }
+
+            if (nextPtr != endPtr) {
+                nextPtr++;
+            }
+
+            size_t bytesToWrite = nextPtr - stringPtr;
+            while (bytesToWrite > 0) {
+                ssize_t bytesWritten = write(STDOUT_FILENO, stringPtr, bytesToWrite);
+                if (bytesWritten < 0) {
+                    if (errno == EINTR) {
+                        continue;
+                    }
+                    break;
+                }
+                bytesToWrite -= bytesWritten;
+                stringPtr += bytesWritten;
+            }
+            stringPtr = nextPtr;
         }
-
-        builder->withJsonStreams(configJsonStreams);
-
-        auto initParams = builder->build();
-        if (!initParams) {
-            return false;
-        }
-
-        acsdkSampleApplication::SampleApplicationComponent sampleAppComponent =
-            acsdkSampleApplication::getComponent(std::move(initParams), m_shutdownRequiredList);
-
-        auto manufactory = acsdkManufactory::Manufactory<
-            std::shared_ptr<avsCommon::avs::initialization::AlexaClientSDKInit>,
-            std::shared_ptr<avsCommon::sdkInterfaces::AuthDelegateInterface>,
-            std::shared_ptr<avsCommon::sdkInterfaces::ContextManagerInterface>,
-            std::shared_ptr<avsCommon::sdkInterfaces::LocaleAssetsManagerInterface>,
-            std::shared_ptr<avsCommon::utils::DeviceInfo>,
-            std::shared_ptr<avsCommon::utils::configuration::ConfigurationNode>,
-            std::shared_ptr<avsCommon::utils::metrics::MetricRecorderInterface>,
-            std::shared_ptr<registrationManager::CustomerDataManagerInterface>,
-            std::shared_ptr<acsdkCryptoInterfaces::CryptoFactoryInterface>,
-            std::shared_ptr<acsdkCryptoInterfaces::KeyStoreInterface>,
-            std::shared_ptr<sampleApp::UIManager>>::create(sampleAppComponent);
-
-        auto metricRecorder = manufactory->get<std::shared_ptr<avsCommon::utils::metrics::MetricRecorderInterface>>();
-        auto m_sdkInit = manufactory->get<std::shared_ptr<avsCommon::avs::initialization::AlexaClientSDKInit>>();
-        if (!m_sdkInit) {
-            return false;
-        }
-
-        auto configPtr = manufactory->get<std::shared_ptr<avsCommon::utils::configuration::ConfigurationNode>>();
-        if (!configPtr) {
-            return false;
-        }
-
-        return true;
     }
 
 }
