@@ -1,8 +1,6 @@
 #include <iostream>
 #include <memory>
 #include <string>
-#include <vector>
-#include <fstream>
 
 namespace SampleTestB {
 
@@ -63,40 +61,47 @@ namespace SampleTestB {
             tapToTalkAudioProvider);
     }
 
-    bool initializeConsoleReader(
-        std::shared_ptr<alexaClientSDK::sampleApp::ConsoleReader> reader,
-        const std::vector<std::string>& configFiles,
-        const std::string& pathToInputFolder,
-        const std::string& logLevel) {
-
-        alexaClientSDK::avsCommon::utils::logger::Level logLevelValue =
-            alexaClientSDK::avsCommon::utils::logger::Level::UNKNOWN;
-        if (!logLevel.empty()) {
-            logLevelValue = alexaClientSDK::avsCommon::utils::logger::convertStringToLogLevel(logLevel);
-            if (alexaClientSDK::avsCommon::utils::logger::Level::UNKNOWN == logLevelValue) {
-                alexaClientSDK::sampleApp::ConsolePrinter::simplePrint("Unknown log level: " + logLevel);
-                return false;
-            }
-        }
-
-        if (configFiles.empty()) {
-            alexaClientSDK::sampleApp::ConsolePrinter::simplePrint("Config file(s) not specified!");
+    bool testMediaPlayersInitialization() {
+        auto speakMediaPlayer = alexaClientSDK::mediaPlayer::MediaPlayer::create(
+            std::move(speakAudioFactory),
+            speakerMediaInterfaces->speaker,
+            "SpeakMediaPlayer",
+            true);
+        if (!speakMediaPlayer) {
+            alexaClientSDK::sampleApp::ConsolePrinter::simplePrint("Failed to create speak media player!");
             return false;
         }
 
-        std::vector<std::shared_ptr<std::istream>> configStreamList;
-        for (auto configFile : configFiles) {
-            if (configFile.empty()) {
-                alexaClientSDK::sampleApp::ConsolePrinter::simplePrint("Config file not specified!");
-                return false;
-            }
-            auto configStream = std::shared_ptr<std::ifstream>(new std::ifstream(configFile));
-            if (!configStream->good()) {
-                alexaClientSDK::sampleApp::ConsolePrinter::simplePrint("Failed to read config file " + configFile);
-                return false;
-            }
-            configStreamList.push_back(configStream);
+        auto alertsMediaPlayer = alexaClientSDK::mediaPlayer::MediaPlayer::create(
+            std::move(alertsAudioFactory),
+            alertsMediaInterfaces->speaker,
+            "AlertsMediaPlayer",
+            true);
+        if (!alertsMediaPlayer) {
+            alexaClientSDK::sampleApp::ConsolePrinter::simplePrint("Failed to create alerts media player!");
+            return false;
         }
+
+        auto notificationsMediaPlayer = alexaClientSDK::mediaPlayer::MediaPlayer::create(
+            std::move(notificationsAudioFactory),
+            notificationMediaInterfaces->speaker,
+            "NotificationsMediaPlayer",
+            true);
+        if (!notificationsMediaPlayer) {
+            alexaClientSDK::sampleApp::ConsolePrinter::simplePrint("Failed to create notifications media player!");
+            return false;
+        }
+
+        auto ringtoneMediaPlayer = alexaClientSDK::mediaPlayer::MediaPlayer::create(
+            std::move(ringtoneAudioFactory),
+            ringtoneMediaInterfaces->speaker,
+            "RingtoneMediaPlayer",
+            true);
+        if (!ringtoneMediaPlayer) {
+            alexaClientSDK::sampleApp::ConsolePrinter::simplePrint("Failed to create ringtone media player!");
+            return false;
+        }
+
         return true;
     }
 
