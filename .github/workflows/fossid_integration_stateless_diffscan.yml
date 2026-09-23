@@ -71,7 +71,7 @@ jobs:
                   --fossid-token "$FOSSID_HOST_TOKEN" \
                   --base-ref "$BASE_REF" \
                   --compare-ref "$COMPARE_REF" \
-                  --license-mode all \
+                  --license-mode new \
                   --format json \
                   --ignore-projects /fossid_config/ignore_projects_fossid' > /tmp/fossid/fossid_raw.json
           rc=$?
