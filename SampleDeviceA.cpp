@@ -47,7 +47,7 @@ namespace SampleTestC {
             {},
             nullptr,
             firmwareVersion,
-            true,
+            false,
             nullptr,
             nullptr,
             metricRecorder,
