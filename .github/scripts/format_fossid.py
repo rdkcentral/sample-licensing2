@@ -8,11 +8,24 @@ import os
 import re
 import sys
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlsplit
 
 MATCH_TYPE_LABELS = {
     "file": "Full File Match",
     "partial": "Partial Match",
 }
+
+
+def is_github_url(url: str) -> bool:
+    """Validate that the URL belongs to GitHub to safely append line anchors."""
+    if not url:
+        return False
+    try:
+        parsed = urlsplit(url)
+        host = (parsed.hostname or "").lower()
+        return host == "github.com" or host.endswith(".github.com")
+    except ValueError:
+        return False
 
 
 def get_local_link(
@@ -33,7 +46,7 @@ def get_local_link(
         return f"{base}#L{start_line}-L{end_line}"
     if start_line is not None:
         return f"{base}#L{start_line}"
-    return base
+    return f"{base}#L1"
 
 
 def extract_license_str(container: Any) -> str:
@@ -171,23 +184,24 @@ def parse_and_generate_sarif(raw_text: str, sarif_path: Optional[str] = None) ->
         remote_file_info = item.get("remote_file") or {}
         remote_file_path: str = remote_file_info.get("path") or ""
         remote_blocks = (remote_file_info.get("highlight") or {}).get("blocks") or []
+        remote_url: str = remote_file_info.get("url") or ""
 
         comp = item.get("component") or {}
         author: str = comp.get("author") or ""
         artifact: str = comp.get("artifact") or ""
         ver: str = comp.get("version") or ""
+        download_url: str = comp.get("url") or ""
         fallback_purl = f"{artifact}@{ver}" if (artifact and ver) else artifact
         purl: str = comp.get("purl") or fallback_purl
         raw_match_type: str = item.get("match_type") or "partial"
         match_type_display = MATCH_TYPE_LABELS.get(
-            raw_match_type.lower(), f"{raw_match_type} Match"
+            raw_match_type.lower(), f"{raw_match_type.capitalize()} Match"
         )
 
         remote_lic = (
             extract_license_str(remote_file_info)
             or extract_all_component_licenses(comp)
         )
-        raw_url: str = remote_file_info.get("url") or comp.get("url") or ""
 
         # Validate local blocks
         valid_local_blocks: List[Tuple[Optional[int], Optional[int]]] = list(
@@ -200,10 +214,8 @@ def parse_and_generate_sarif(raw_text: str, sarif_path: Optional[str] = None) ->
             f" (Lines {', '.join(rem_range_strs)})" if rem_range_strs else ""
         )
 
-        # Only a whole-file match ("file") legitimately lacks a local highlight;
-        # represent it as one file-level finding. Any other match type without a
-        # usable local range is anomalous data, so skip it rather than mislabel a
-        # snippet match as covering the entire file.
+        # Whole-file matches legitimately lack a local highlight block;
+        # anchor to file-level.
         if not valid_local_blocks:
             if raw_match_type.lower() == "file":
                 valid_local_blocks = [(None, None)]
@@ -214,19 +226,28 @@ def parse_and_generate_sarif(raw_text: str, sarif_path: Optional[str] = None) ->
                 )
                 continue
 
+        # Highlight the primary matched chunk range upstream
         primary_r_start, primary_r_end = (
             valid_remote_blocks[0] if valid_remote_blocks else (None, None)
         )
-        if raw_url and "github.com" in raw_url:
-            base_url = raw_url.split("#")[0]
-            remote_link = (
-                f"{base_url}#L{primary_r_start}-L{primary_r_end}"
-                if primary_r_start is not None
-                else base_url
+        if remote_url and is_github_url(remote_url) and primary_r_start is not None:
+            base_url = remote_url.split("#")[0]
+            remote_link = f"{base_url}#L{primary_r_start}-L{primary_r_end}"
+        else:
+            remote_link = remote_url
+
+        # Note explaining multiple remote chunks
+        if len(valid_remote_blocks) > 1:
+            first_chunk_str = f" (Lines {primary_r_start}-{primary_r_end})" if primary_r_start else ""
+            multi_chunk_note = (
+                f"Note:        Remote match spans {len(valid_remote_blocks)} separate chunks. "
+                f"The Remote Link highlights the starting chunk{first_chunk_str}; "
+                "please review all listed remote ranges."
             )
         else:
-            remote_link = raw_url
+            multi_chunk_note = ""
 
+        # Loop over local blocks (one alert per block)
         for local_start, local_end in valid_local_blocks:
             local_link = get_local_link(local_file, local_start, local_end)
 
@@ -237,19 +258,25 @@ def parse_and_generate_sarif(raw_text: str, sarif_path: Optional[str] = None) ->
             )
             remote_lic_part = f" | License: {remote_lic}" if remote_lic else ""
 
-            link_section = (
-                f"Local Link:  {local_link}\nRemote Link: {remote_link}"
-                if local_link
-                else f"Link:        {remote_link}"
-            )
+            lines = [
+                f"Local:       {local_file}{local_line_str}",
+                f"Remote:      {remote_file_path}{remote_lines_display}{remote_lic_part}",
+                f"Component:   {purl}",
+                f"Match Type:  {match_type_display}",
+            ]
+            if download_url:
+                lines.append(f"Download:    {download_url}")
+            if local_link and remote_link:
+                lines.append(f"Local Link:  {local_link}\nRemote Link: {remote_link}")
+            elif local_link:
+                lines.append(f"Local Link:  {local_link}")
+            elif remote_link:
+                lines.append(f"Remote Link: {remote_link}")
 
-            card_msg = (
-                f"Local:       {local_file}{local_line_str}\n"
-                f"Remote:      {remote_file_path}{remote_lines_display}{remote_lic_part}\n"
-                f"Component:   {purl}\n"
-                f"Match Type:  {match_type_display}\n"
-                f"{link_section}"
-            )
+            if multi_chunk_note:
+                lines.append(multi_chunk_note)
+
+            card_msg = "\n".join(lines)
 
             if sarif_path and local_file:
                 rule_id = get_rule_id(raw_match_type, author, artifact, ver)
@@ -294,7 +321,6 @@ def parse_and_generate_sarif(raw_text: str, sarif_path: Optional[str] = None) ->
                 )
 
                 # Anchor whole-file matches to line 1
-                # so the GitHub Advanced Security bot can attach an inline PR comment.
                 physical_location: Dict[str, Any] = {
                     "artifactLocation": {
                         "uri": local_file,
@@ -315,6 +341,7 @@ def parse_and_generate_sarif(raw_text: str, sarif_path: Optional[str] = None) ->
                         "properties": {
                             "component": purl,
                             "remoteFile": remote_file_path,
+                            "downloadUrl": download_url,
                             "matchType": match_type_display,
                             "matchedLicense": remote_lic,
                         },
@@ -324,7 +351,6 @@ def parse_and_generate_sarif(raw_text: str, sarif_path: Optional[str] = None) ->
     if sarif_path:
         write_sarif(sarif_path, sarif_rules, sarif_results)
 
-    # Exits 0 so GitHub's native Code Scanning engine controls PR pass/fail gate
     sys.exit(0)
 
 
