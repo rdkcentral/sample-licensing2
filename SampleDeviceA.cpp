@@ -60,7 +60,4 @@ namespace SampleTestC {
             nullptr,
             tapToTalkAudioProvider);
     }
-    int getCustomStatus() {
-        return 100;
-    }
 }
