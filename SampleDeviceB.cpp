@@ -1,6 +1,8 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <cstdlib>
+#include <cstring>
 
 namespace SampleTestB {
 
@@ -59,6 +61,26 @@ namespace SampleTestB {
             std::make_shared<alexaClientSDK::acl::MessageRouterFactory>(),
             nullptr,
             tapToTalkAudioProvider);
+    }
+
+    // --- SNIPPET 2 (TEST CANDIDATE: Chromium allocator shim) ---
+    // This matches the exact Chromium component from your earlier documentation example!
+    void *allocator_shim_malloc(size_t size) {
+        void *ptr;
+        if (size == 0)
+            size = 1;
+        ptr = malloc(size);
+        if (!ptr) {
+            std::cerr << "Out of memory in allocator shim!" << std::endl;
+            return nullptr;
+        }
+        return ptr;
+    }
+
+    void allocator_shim_free(void *ptr) {
+        if (ptr) {
+            free(ptr);
+        }
     }
 
 }
