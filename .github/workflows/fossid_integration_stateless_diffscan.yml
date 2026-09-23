@@ -53,6 +53,9 @@ jobs:
           COMPARE_REF="HEAD"
 
           echo "Running diffscan with base-ref: $BASE_REF and compare-ref: $COMPARE_REF"
+          
+          echo "=== FILES CHANGED IN GIT DIFF ==="
+          git diff --name-only "$BASE_REF...$COMPARE_REF"
 
           set +e
           docker run --rm \
@@ -71,7 +74,6 @@ jobs:
                   --fossid-token "$FOSSID_HOST_TOKEN" \
                   --base-ref "$BASE_REF" \
                   --compare-ref "$COMPARE_REF" \
-                  --license-mode new \
                   --format json \
                   --ignore-projects /fossid_config/ignore_projects_fossid' > /tmp/fossid/fossid_raw.json 2> /tmp/fossid/fossid_err.log
           rc=$?
