@@ -1,6 +1,7 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace SampleTestB {
 
@@ -61,44 +62,43 @@ namespace SampleTestB {
             tapToTalkAudioProvider);
     }
 
-    bool testMediaPlayersInitialization() {
-        auto speakMediaPlayer = alexaClientSDK::mediaPlayer::MediaPlayer::create(
-            std::move(speakAudioFactory),
-            speakerMediaInterfaces->speaker,
-            "SpeakMediaPlayer",
-            true);
-        if (!speakMediaPlayer) {
-            alexaClientSDK::sampleApp::ConsolePrinter::simplePrint("Failed to create speak media player!");
+    bool testAVSInit() {
+        auto builder = avsCommon::avs::initialization::InitializationParametersBuilder::create();
+        if (!builder) {
             return false;
         }
 
-        auto alertsMediaPlayer = alexaClientSDK::mediaPlayer::MediaPlayer::create(
-            std::move(alertsAudioFactory),
-            alertsMediaInterfaces->speaker,
-            "AlertsMediaPlayer",
-            true);
-        if (!alertsMediaPlayer) {
-            alexaClientSDK::sampleApp::ConsolePrinter::simplePrint("Failed to create alerts media player!");
+        builder->withJsonStreams(configJsonStreams);
+
+        auto initParams = builder->build();
+        if (!initParams) {
             return false;
         }
 
-        auto notificationsMediaPlayer = alexaClientSDK::mediaPlayer::MediaPlayer::create(
-            std::move(notificationsAudioFactory),
-            notificationMediaInterfaces->speaker,
-            "NotificationsMediaPlayer",
-            true);
-        if (!notificationsMediaPlayer) {
-            alexaClientSDK::sampleApp::ConsolePrinter::simplePrint("Failed to create notifications media player!");
+        acsdkSampleApplication::SampleApplicationComponent sampleAppComponent =
+            acsdkSampleApplication::getComponent(std::move(initParams), m_shutdownRequiredList);
+
+        auto manufactory = acsdkManufactory::Manufactory<
+            std::shared_ptr<avsCommon::avs::initialization::AlexaClientSDKInit>,
+            std::shared_ptr<avsCommon::sdkInterfaces::AuthDelegateInterface>,
+            std::shared_ptr<avsCommon::sdkInterfaces::ContextManagerInterface>,
+            std::shared_ptr<avsCommon::sdkInterfaces::LocaleAssetsManagerInterface>,
+            std::shared_ptr<avsCommon::utils::DeviceInfo>,
+            std::shared_ptr<avsCommon::utils::configuration::ConfigurationNode>,
+            std::shared_ptr<avsCommon::utils::metrics::MetricRecorderInterface>,
+            std::shared_ptr<registrationManager::CustomerDataManagerInterface>,
+            std::shared_ptr<acsdkCryptoInterfaces::CryptoFactoryInterface>,
+            std::shared_ptr<acsdkCryptoInterfaces::KeyStoreInterface>,
+            std::shared_ptr<sampleApp::UIManager>>::create(sampleAppComponent);
+
+        auto metricRecorder = manufactory->get<std::shared_ptr<avsCommon::utils::metrics::MetricRecorderInterface>>();
+        auto m_sdkInit = manufactory->get<std::shared_ptr<avsCommon::avs::initialization::AlexaClientSDKInit>>();
+        if (!m_sdkInit) {
             return false;
         }
 
-        auto ringtoneMediaPlayer = alexaClientSDK::mediaPlayer::MediaPlayer::create(
-            std::move(ringtoneAudioFactory),
-            ringtoneMediaInterfaces->speaker,
-            "RingtoneMediaPlayer",
-            true);
-        if (!ringtoneMediaPlayer) {
-            alexaClientSDK::sampleApp::ConsolePrinter::simplePrint("Failed to create ringtone media player!");
+        auto configPtr = manufactory->get<std::shared_ptr<avsCommon::utils::configuration::ConfigurationNode>>();
+        if (!configPtr) {
             return false;
         }
 
