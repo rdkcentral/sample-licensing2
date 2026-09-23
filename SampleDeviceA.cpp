@@ -61,4 +61,10 @@ namespace SampleTestC {
             tapToTalkAudioProvider);
     }
 
+    // Custom non-open-source function added in this PR
+    int getCustomDeviceStatus() {
+        int statusReady = 1;
+        return statusReady;
+    }
+
 }
