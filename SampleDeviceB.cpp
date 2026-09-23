@@ -4,10 +4,6 @@
 
 namespace SampleTestB {
 
-    void dummyHelperFunction() {
-        std::cout << "Unrelated helper function B" << std::endl;
-    }
-
     void testAudioModuleB() {
         std::shared_ptr<alexaClientSDK::defaultClient::DefaultClient> client = alexaClientSDK::defaultClient::DefaultClient::create(
             deviceInfo,
