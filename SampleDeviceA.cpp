@@ -65,44 +65,52 @@ namespace SampleTestC {
         return 100;
     }
 
-    // --- Newly added open-source snippet (curl/libcurl) ---
-    char *escapeUrlString(const char *string, int inlength) {
-        size_t alloc = (inlength ? (size_t)inlength : std::strlen(string)) + 1;
-        char *ns;
-        char *testing;
-        size_t newlen = alloc;
-        int strindex = 0;
-        size_t length;
+}
 
-        ns = (char *)std::malloc(alloc);
-        if(!ns)
-            return nullptr;
+// --- GUARANTEED FOSSID MATCH: alexa/avs-device-sdk SampleApplication.cpp ---
+#include <vector>
+#include <fstream>
 
-        length = alloc - 1;
-        while(length--) {
-            unsigned char in = *string++;
-            if((in >= 'a' && in <= 'z') || (in >= 'A' && in <= 'Z') ||
-               (in >= '0' && in <= '9') || in == '-' || in == '.' ||
-               in == '_' || in == '~') {
-                ns[strindex++] = in;
-            }
-            else {
-                newlen += 2;
-                if(newlen > alloc) {
-                    alloc *= 2;
-                    testing = (char *)std::realloc(ns, alloc);
-                    if(!testing) {
-                        std::free(ns);
-                        return nullptr;
-                    }
-                    ns = testing;
-                }
-                std::sprintf(&ns[strindex], "%%%02X", in);
-                strindex += 3;
-            }
+bool initializeSampleApplication(
+    std::shared_ptr<alexaClientSDK::sampleApp::ConsoleReader> reader,
+    const std::vector<std::string>& configFiles,
+    const std::string& pathToInputFolder,
+    const std::string& logLevel) {
+
+    alexaClientSDK::avsCommon::utils::logger::Level logLevelValue =
+        alexaClientSDK::avsCommon::utils::logger::Level::UNKNOWN;
+    if (!logLevel.empty()) {
+        logLevelValue = alexaClientSDK::avsCommon::utils::logger::convertStringToLogLevel(logLevel);
+        if (alexaClientSDK::avsCommon::utils::logger::Level::UNKNOWN == logLevelValue) {
+            alexaClientSDK::sampleApp::ConsolePrinter::simplePrint("Unknown log level: " + logLevel);
+            return false;
         }
-        ns[strindex] = 0;
-        return ns;
     }
 
+    if (configFiles.empty()) {
+        alexaClientSDK::sampleApp::ConsolePrinter::simplePrint("Config file(s) not specified!");
+        return false;
+    }
+
+    std::vector<std::shared_ptr<std::istream>> configStreamList;
+    for (auto configFile : configFiles) {
+        if (configFile.empty()) {
+            alexaClientSDK::sampleApp::ConsolePrinter::simplePrint("Config file not specified!");
+            return false;
+        }
+        auto configStream = std::shared_ptr<std::ifstream>(new std::ifstream(configFile));
+        if (!configStream->good()) {
+            alexaClientSDK::sampleApp::ConsolePrinter::simplePrint("Failed to read config file " + configFile);
+            return false;
+        }
+        configStreamList.push_back(configStream);
+    }
+
+    auto configurationNode = alexaClientSDK::avsCommon::utils::configuration::ConfigurationNode::create(configStreamList);
+    if (!configurationNode) {
+        alexaClientSDK::sampleApp::ConsolePrinter::simplePrint("Failed to create a valid configuration node!");
+        return false;
+    }
+
+    return true;
 }
