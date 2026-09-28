@@ -11,7 +11,7 @@ namespace SampleTestB {
     void relocatedAudioModule() {
         std::shared_ptr<alexaClientSDK::defaultClient::DefaultClient> client = alexaClientSDK::defaultClient::DefaultClient::create(
             deviceInfo,
-            customerDataManager,
+            customerDataManagerHandle,
             m_externalMusicProviderMediaPlayersMap,
             m_externalMusicProviderSpeakersMap,
             m_adapterToCreateFuncMap,
