@@ -5,6 +5,21 @@
 namespace SampleTestB {
 
     void testAudioModuleB() {
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
         std::shared_ptr<alexaClientSDK::defaultClient::DefaultClient> client = alexaClientSDK::defaultClient::DefaultClient::create(
             deviceInfo,
             customerDataManager,
