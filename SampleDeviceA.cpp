@@ -2,7 +2,7 @@
 #include <memory>
 #include <string>
 
-namespace SampleTestC {
+namespace SampleTestA {
 
     void testAudioModuleC() {
         std::shared_ptr<alexaClientSDK::defaultClient::DefaultClient> client = alexaClientSDK::defaultClient::DefaultClient::create(
