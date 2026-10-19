@@ -1,0 +1,4 @@
+INCOMPATIBLE_LICENSE = "GPL-3.0"
+LICENSE_FLAGS = "commercial"
+LICENSE_remove = "GPL"
+WHITELIST_GPLv3 = "x"
