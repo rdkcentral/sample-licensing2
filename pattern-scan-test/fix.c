@@ -1,1 +1,1 @@
-GST_PLUGIN_DEFINE(1, 2, 3);
+// fixed
