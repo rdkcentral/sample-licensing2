@@ -1,5 +1,5 @@
-
-
-
-MODULE_LICENSE("GPL");
+// a
+// b
+// c
+   MODULE_LICENSE("GPL");
    
