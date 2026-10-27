@@ -27,4 +27,3 @@ INCOMPATIBLE_LICENSE = "GPL-3.0"
 # filler line 27
 LICENSE_FLAGS = "commercial"
 # filler line 29
-# filler line 30
