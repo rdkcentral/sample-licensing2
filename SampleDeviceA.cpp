@@ -60,6 +60,7 @@ namespace SampleTestC {
             nullptr,
             tapToTalkAudioProvider);
     }
+
     float Q_rsqrt(float number)
     {
         long i;
