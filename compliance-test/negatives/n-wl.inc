@@ -1,0 +1,1 @@
+WHITELIST_GPLv2 = "a"
