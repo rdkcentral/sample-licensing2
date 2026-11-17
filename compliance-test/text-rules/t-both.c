@@ -1,0 +1,1 @@
+GST_PLUGIN_DEFINE(1, 2, test) MODULE_LICENSE("test");
