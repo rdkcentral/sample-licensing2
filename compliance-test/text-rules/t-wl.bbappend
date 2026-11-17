@@ -1,0 +1,2 @@
+WHITELIST_GPLv3 = "a"
+WHITELIST_GPL-3 = "b"
