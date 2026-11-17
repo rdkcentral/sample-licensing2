@@ -1,2 +1,2 @@
-#TESTCHANGE
+TESTCHANGE
 fossid default-on test
